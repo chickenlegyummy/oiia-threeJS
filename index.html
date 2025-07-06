@@ -143,11 +143,31 @@
             color: white;
             font-family: monospace;
             font-size: 14px;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 10px;
-            border-radius: 5px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
             z-index: 50;
             display: none;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        #hud div {
+            margin: 5px 0;
+        }
+        
+        #hud #ammo {
+            color: #4ecdc4;
+            font-weight: bold;
+        }
+        
+        #hud #score {
+            color: #f9ca24;
+            font-weight: bold;
+        }
+        
+        #hud #targets {
+            color: #ff6b6b;
+            font-weight: bold;
         }
         
         #hud.active {
@@ -236,8 +256,8 @@
     <div id="crosshair"></div>
     
     <div id="instructions">
-        <h1>Enhanced FPS Game</h1>
-        <p>Experience advanced first-person controls with enhanced visuals</p>
+        <h1>FPS Cat Shooter</h1>
+        <p>Hunt the animated cat targets with your AK-47!</p>
         
         <div class="controls">
             <h2>Controls</h2>
@@ -251,12 +271,15 @@
                     <p><kbd>Shift</kbd> - Run</p>
                 </div>
                 <div class="control-item">
+                    <p><kbd>Left Click</kbd> - Shoot</p>
+                    <p><kbd>R</kbd> - Reload</p>
+                </div>
+                <div class="control-item">
                     <p><kbd>C</kbd> - Crouch</p>
                     <p><kbd>F</kbd> - Focus mode</p>
                 </div>
                 <div class="control-item">
                     <p><kbd>Tab</kbd> - Debug Panel</p>
-                    <p><kbd>Esc</kbd> - Exit</p>
                 </div>
             </div>
         </div>

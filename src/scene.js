@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { Player } from './player.js';
+import { Weapon } from './weapon.js';
+import { TargetManager } from './targets.js';
 
 // Create scene
 const scene = new THREE.Scene();
@@ -41,6 +43,10 @@ scene.fog = new THREE.Fog(0xffffff, 100, 300);
 // Create camera
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 1.6, 5); // Eye level height
+
+// Add audio listener to camera
+const audioListener = new THREE.AudioListener();
+camera.add(audioListener);
 
 // Create renderer with enhanced settings
 const renderer = new THREE.WebGLRenderer({ 
@@ -177,6 +183,115 @@ scene.add(particles);
 // Initialize player
 const player = new Player(camera, scene);
 
+// Initialize weapon system
+let weapon = null;
+let targetManager = null;
+
+// Initialize systems asynchronously
+async function initializeSystems() {
+    try {
+        console.log('Starting initialization of FPS systems...');
+        
+        // Initialize weapon system
+        weapon = new Weapon(camera, scene, audioListener);
+        
+        // Wait a bit for weapon to load, then check
+        setTimeout(() => {
+            console.log('Weapon system check:');
+            console.log('- Weapon object:', weapon);
+            console.log('- Weapon loaded:', weapon?.isLoaded);
+            console.log('- Weapon model:', weapon?.model);
+            console.log('- Camera children:', camera.children.length);
+            
+            // Force fallback if no weapon visible
+            if (!weapon?.model || camera.children.length === 1) { // Only audio listener
+                console.log('Forcing weapon fallback model...');
+                weapon?.createFallbackModel();
+                weapon?.attachToCamera();
+            }
+        }, 2000);
+        
+        // Initialize target system
+        targetManager = new TargetManager(scene);
+        
+        // Set up callbacks after initialization
+        if (targetManager) {
+            targetManager.onTargetDestroyed = (points) => {
+                score += points;
+                updateScoreDisplay();
+            };
+        }
+        
+        if (weapon) {
+            weapon.onAmmoChange = (mag, total) => {
+                updateAmmoDisplay(mag, total);
+            };
+            
+            // Initialize HUD with starting ammo after a delay
+            setTimeout(() => {
+                if (weapon) {
+                    const ammo = weapon.getAmmoCount();
+                    updateAmmoDisplay(ammo.mag, ammo.total);
+                }
+            }, 1000);
+        }
+        
+        console.log('FPS systems initialization completed');
+    } catch (error) {
+        console.error('Error initializing FPS systems:', error);
+    }
+}
+
+// Initialize systems
+initializeSystems();
+
+// Score system
+let score = 0;
+
+// HUD update functions
+function updateAmmoDisplay(mag, total) {
+    const ammoElement = document.getElementById('ammo');
+    if (!ammoElement) {
+        // Create ammo display if it doesn't exist
+        const hud = document.getElementById('hud');
+        const ammoDiv = document.createElement('div');
+        ammoDiv.id = 'ammo';
+        ammoDiv.innerHTML = `Ammo: ${mag}/${total}`;
+        hud.appendChild(ammoDiv);
+    } else {
+        ammoElement.innerHTML = `Ammo: ${mag}/${total}`;
+    }
+}
+
+function updateScoreDisplay() {
+    const scoreElement = document.getElementById('score');
+    if (!scoreElement) {
+        // Create score display if it doesn't exist
+        const hud = document.getElementById('hud');
+        const scoreDiv = document.createElement('div');
+        scoreDiv.id = 'score';
+        scoreDiv.innerHTML = `Score: ${score}`;
+        hud.appendChild(scoreDiv);
+    } else {
+        scoreElement.innerHTML = `Score: ${score}`;
+    }
+}
+
+function updateTargetsDisplay() {
+    const targetsElement = document.getElementById('targets');
+    const targetCount = targetManager.getTargetCount();
+    if (!targetsElement) {
+        // Create targets display if it doesn't exist
+        const hud = document.getElementById('hud');
+        const targetsDiv = document.createElement('div');
+        targetsDiv.id = 'targets';
+        targetsDiv.innerHTML = `Targets: ${targetCount}`;
+        hud.appendChild(targetsDiv);
+    } else {
+        targetsElement.innerHTML = `Targets: ${targetCount}`;
+    }
+}
+
 // Debug Panel functionality
 let debugPanelVisible = false;
 
@@ -279,6 +394,16 @@ function animate() {
     // Update player
     player.update();
     
+    // Update weapon system (if loaded)
+    if (weapon) {
+        weapon.update(0.016); // Assuming ~60fps
+    }
+    
+    // Update targets (if loaded)
+    if (targetManager) {
+        targetManager.update(time);
+    }
+    
     // Update HUD with player info
     if (player.isLocked) {
         const speed = Math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z);
@@ -286,6 +411,11 @@ function animate() {
         document.getElementById('speed').textContent = `Speed: ${speed.toFixed(1)}`;
         document.getElementById('position').textContent = `Position: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}`;
         document.getElementById('hud').classList.add('active');
+        
+        // Update additional HUD elements (if systems loaded)
+        if (targetManager) {
+            updateTargetsDisplay();
+        }
     } else {
         document.getElementById('hud').classList.remove('active');
     }

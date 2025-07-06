@@ -88,17 +88,16 @@ export class Player {
         // Enhanced mouse movement with smoothing
         let mouseX = 0, mouseY = 0;
         document.addEventListener('mousemove', (event) => {
-            if (!this.isLocked) return;
-            
-            mouseX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
-            mouseY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
-            
-            this.euler.setFromQuaternion(this.camera.quaternion);
-            this.euler.y -= mouseX * this.mouseSensitivity;
-            this.euler.x -= mouseY * this.mouseSensitivity;
-            this.euler.x = Math.max(-this.PI_2, Math.min(this.PI_2, this.euler.x));
-            
-            this.camera.quaternion.setFromEuler(this.euler);
+            if (this.isLocked) {
+                mouseX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+                mouseY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+                
+                this.euler.setFromQuaternion(this.camera.quaternion);
+                this.euler.y -= mouseX * this.mouseSensitivity;
+                this.euler.x -= mouseY * this.mouseSensitivity;
+                this.euler.x = Math.max(-this.PI_2, Math.min(this.PI_2, this.euler.x));
+                this.camera.quaternion.setFromEuler(this.euler);
+            }
         });
         
         // Enhanced keyboard controls with more keys
@@ -140,6 +139,7 @@ export class Player {
     }
     
     handleKeyDown(event) {
+        // Normal mode controls
         switch (event.code) {
             case 'KeyW':
             case 'ArrowUp':
@@ -182,6 +182,7 @@ export class Player {
     }
     
     handleKeyUp(event) {
+        // Normal mode controls
         switch (event.code) {
             case 'KeyW':
             case 'ArrowUp':
