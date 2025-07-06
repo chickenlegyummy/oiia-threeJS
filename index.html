@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced FPS Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            background-color: #000;
+            cursor: none;
+        }
+        
+        canvas {
+            display: block;
+            cursor: none;
+        }
+        
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            margin: -10px 0 0 -10px;
+            pointer-events: none;
+            z-index: 100;
+            opacity: 0.8;
+        }
+        
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+        }
+        
+        #crosshair::before {
+            left: 50%;
+            top: 20%;
+            width: 2px;
+            height: 60%;
+            margin-left: -1px;
+        }
+        
+        #crosshair::after {
+            top: 50%;
+            left: 20%;
+            height: 2px;
+            width: 60%;
+            margin-top: -1px;
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), rgba(30, 30, 50, 0.9));
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            text-align: center;
+            transition: opacity 0.3s ease;
+        }
+        
+        #instructions h1 {
+            font-size: 2.5em;
+            margin-bottom: 0.5em;
+            color: #4ecdc4;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+        
+        #instructions p {
+            font-size: 1.2em;
+            margin: 0.3em 0;
+            opacity: 0.9;
+        }
+        
+        #instructions .controls {
+            margin-top: 2em;
+            padding: 1em;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        #instructions .controls h2 {
+            color: #f9ca24;
+            margin-bottom: 1em;
+            font-size: 1.5em;
+        }
+        
+        #instructions .control-group {
+            display: flex;
+            justify-content: space-between;
+            max-width: 600px;
+            margin: 1em 0;
+        }
+        
+        #instructions .control-item {
+            flex: 1;
+            margin: 0 1em;
+        }
+        
+        #instructions kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-family: monospace;
+            font-weight: bold;
+            color: #4ecdc4;
+        }
+        
+        #instructions .click-hint {
+            margin-top: 2em;
+            font-size: 1.4em;
+            color: #ff6b6b;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 50;
+            display: none;
+        }
+        
+        #hud.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair"></div>
+    
+    <div id="instructions">
+        <h1>Enhanced FPS Game</h1>
+        <p>Experience advanced first-person controls with enhanced visuals</p>
+        
+        <div class="controls">
+            <h2>Controls</h2>
+            <div class="control-group">
+                <div class="control-item">
+                    <p><kbd>W A S D</kbd> - Move</p>
+                    <p><kbd>Mouse</kbd> - Look around</p>
+                </div>
+                <div class="control-item">
+                    <p><kbd>Space</kbd> - Jump</p>
+                    <p><kbd>Shift</kbd> - Run</p>
+                </div>
+                <div class="control-item">
+                    <p><kbd>C</kbd> - Crouch</p>
+                    <p><kbd>F</kbd> - Focus mode</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="click-hint">
+            Click anywhere or press F to start playing
+        </div>
+    </div>
+    
+    <div id="hud">
+        <div id="speed">Speed: 0</div>
+        <div id="position">Position: 0, 0, 0</div>
+        <div id="fps">FPS: 60</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script type="module" src="src/scene.js"></script>
+    <script type="module" src="src/player.js"></script>
+</body>
+</html>
