@@ -1,8 +1,42 @@
+import * as THREE from 'three';
 import { Player } from './player.js';
 
 // Create scene
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x87CEEB, 50, 200); // Add atmospheric fog
+
+// Create skybox using cube texture
+const loader = new THREE.CubeTextureLoader();
+const skyboxTexture = loader.load([
+    'skymap/px.png', // positive x
+    'skymap/nx.png', // negative x
+    'skymap/py.png', // positive y
+    'skymap/ny.png', // negative y
+    'skymap/pz.png', // positive z
+    'skymap/nz.png'  // negative z
+], 
+// onLoad
+() => {
+    console.log('Skybox cube texture loaded successfully');
+},
+// onProgress
+(progress) => {
+    console.log('Skybox loading progress');
+},
+// onError
+(error) => {
+    console.error('Error loading skybox cube texture:', error);
+    // Fallback to solid color background
+    scene.background = new THREE.Color(0x87CEEB);
+});
+
+// Set the skybox as scene background
+scene.background = skyboxTexture;
+
+// Optional: Add subtle atmospheric fog for depth
+scene.fog = new THREE.Fog(0xffffff, 100, 300);
+
+// Remove fog temporarily while we load the skybox
+// scene.fog = new THREE.Fog(0x87CEEB, 50, 200);
 
 // Create camera
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -143,6 +177,75 @@ scene.add(particles);
 // Initialize player
 const player = new Player(camera, scene);
 
+// Debug Panel functionality
+let debugPanelVisible = false;
+
+// Toggle debug panel with Tab key
+document.addEventListener('keydown', (event) => {
+    if (event.code === 'Tab') {
+        event.preventDefault();
+        debugPanelVisible = !debugPanelVisible;
+        const debugPanel = document.getElementById('debugPanel');
+        const instructions = document.getElementById('instructions');
+        
+        debugPanel.classList.toggle('active', debugPanelVisible);
+        
+        if (debugPanelVisible) {
+            // Opening debug panel - release pointer lock
+            if (player.isLocked) {
+                player.exitPointerLock();
+            }
+        } else {
+            // Closing debug panel - hide instructions and enable clicking to re-enter game
+            instructions.style.display = 'none';
+        }
+    }
+});
+
+// Debug panel controls
+function setupDebugControls() {
+    const controls = {
+        speed: { slider: 'speedSlider', value: 'speedValue', property: 'speed' },
+        runSpeed: { slider: 'runSpeedSlider', value: 'runSpeedValue', property: 'runSpeed' },
+        jump: { slider: 'jumpSlider', value: 'jumpValue', property: 'jumpVelocity' },
+        gravity: { slider: 'gravitySlider', value: 'gravityValue', property: 'gravity' },
+        sensitivity: { slider: 'sensitivitySlider', value: 'sensitivityValue', property: 'mouseSensitivity' },
+        damping: { slider: 'dampingSlider', value: 'dampingValue', property: 'damping' }
+    };
+    
+    Object.entries(controls).forEach(([key, control]) => {
+        const slider = document.getElementById(control.slider);
+        const valueDisplay = document.getElementById(control.value);
+        
+        slider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            player[control.property] = value;
+            valueDisplay.textContent = value.toFixed(3);
+        });
+    });
+}
+
+// Reset to default values
+window.resetToDefaults = function() {
+    const defaults = {
+        speedSlider: 12,
+        runSpeedSlider: 20,
+        jumpSlider: 15,
+        gravitySlider: 30,
+        sensitivitySlider: 0.002,
+        dampingSlider: 8
+    };
+    
+    Object.entries(defaults).forEach(([sliderId, value]) => {
+        const slider = document.getElementById(sliderId);
+        slider.value = value;
+        slider.dispatchEvent(new Event('input'));
+    });
+};
+
+// Initialize debug controls
+setupDebugControls();
+
 // Handle window resize
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -155,13 +258,39 @@ window.addEventListener('resize', onWindowResize);
 
 // Animation loop with enhanced effects
 let time = 0;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+
 function animate() {
     requestAnimationFrame(animate);
     
     time += 0.016;
+    frameCount++;
+    
+    // Update FPS counter every second
+    const currentTime = performance.now();
+    if (currentTime - lastFpsTime >= 1000) {
+        const fps = Math.round((frameCount * 1000) / (currentTime - lastFpsTime));
+        document.getElementById('fps').textContent = `FPS: ${fps}`;
+        frameCount = 0;
+        lastFpsTime = currentTime;
+    }
     
     // Update player
     player.update();
+    
+    // Update HUD with player info
+    if (player.isLocked) {
+        const speed = Math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z);
+        const pos = player.camera.position;
+        document.getElementById('speed').textContent = `Speed: ${speed.toFixed(1)}`;
+        document.getElementById('position').textContent = `Position: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}`;
+        document.getElementById('hud').classList.add('active');
+    } else {
+        document.getElementById('hud').classList.remove('active');
+    }
+    
+    // ...existing animation code...
     
     // Animate main cube
     cube.rotation.x += 0.008;

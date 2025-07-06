@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+
 export class Player {
     constructor(camera, scene) {
         this.camera = camera;
@@ -71,9 +73,13 @@ export class Player {
                 );
                 
                 const instructions = document.getElementById('instructions');
+                const debugPanel = document.getElementById('debugPanel');
+                const isDebugPanelVisible = debugPanel && debugPanel.classList.contains('active');
+                
                 if (this.isLocked) {
                     instructions.style.display = 'none';
-                } else {
+                } else if (!isDebugPanelVisible) {
+                    // Only show instructions if debug panel is not open
                     instructions.style.display = 'block';
                 }
             });
@@ -120,6 +126,16 @@ export class Player {
             element.mozRequestPointerLock();
         } else if (element.webkitRequestPointerLock) {
             element.webkitRequestPointerLock();
+        }
+    }
+
+    exitPointerLock() {
+        if (document.exitPointerLock) {
+            document.exitPointerLock();
+        } else if (document.mozExitPointerLock) {
+            document.mozExitPointerLock();
+        } else if (document.webkitExitPointerLock) {
+            document.webkitExitPointerLock();
         }
     }
     
@@ -248,7 +264,7 @@ export class Player {
         
         // Update direction based on movement keys
         this.direction.z = Number(this.moveForward) - Number(this.moveBackward);
-        this.direction.x = Number(this.moveRight) - Number(this.moveLeft);
+        this.direction.x = Number(this.moveLeft) - Number(this.moveRight); // Fixed: swapped left and right
         this.direction.normalize();
         
         // Apply movement forces

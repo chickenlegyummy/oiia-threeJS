@@ -153,6 +153,83 @@
         #hud.active {
             display: block;
         }
+        
+        #debugPanel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 280px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Arial', sans-serif;
+            font-size: 12px;
+            z-index: 200;
+            display: none;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        #debugPanel.active {
+            display: block;
+        }
+        
+        /* Show cursor when debug panel is active */
+        body:has(#debugPanel.active) {
+            cursor: default !important;
+        }
+        
+        body:has(#debugPanel.active) canvas {
+            cursor: default !important;
+        }
+        
+        #debugPanel h3 {
+            margin: 0 0 10px 0;
+            color: #4ecdc4;
+            font-size: 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 5px;
+        }
+        
+        .debug-control {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .debug-control label {
+            flex: 1;
+            margin-right: 10px;
+            color: #fff;
+        }
+        
+        .debug-control input[type="range"] {
+            flex: 1;
+            margin: 0 5px;
+        }
+        
+        .debug-control .value {
+            width: 40px;
+            text-align: right;
+            color: #f9ca24;
+            font-weight: bold;
+        }
+        
+        .debug-toggle {
+            background: #4ecdc4;
+            color: black;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            margin-top: 10px;
+        }
+        
+        .debug-toggle:hover {
+            background: #45b7d1;
+        }
     </style>
 </head>
 <body>
@@ -177,6 +254,10 @@
                     <p><kbd>C</kbd> - Crouch</p>
                     <p><kbd>F</kbd> - Focus mode</p>
                 </div>
+                <div class="control-item">
+                    <p><kbd>Tab</kbd> - Debug Panel</p>
+                    <p><kbd>Esc</kbd> - Exit</p>
+                </div>
             </div>
         </div>
         
@@ -190,8 +271,58 @@
         <div id="position">Position: 0, 0, 0</div>
         <div id="fps">FPS: 60</div>
     </div>
+    
+    <div id="debugPanel">
+        <h3>Debug Panel</h3>
+        <p style="margin: 0 0 10px 0; color: #ccc; font-size: 11px;">Press Tab to close and return to game</p>
+        
+        <div class="debug-control">
+            <label>Movement Speed:</label>
+            <input type="range" id="speedSlider" min="5" max="30" step="0.5" value="12">
+            <span class="value" id="speedValue">12.0</span>
+        </div>
+        
+        <div class="debug-control">
+            <label>Run Speed:</label>
+            <input type="range" id="runSpeedSlider" min="15" max="40" step="0.5" value="20">
+            <span class="value" id="runSpeedValue">20.0</span>
+        </div>
+        
+        <div class="debug-control">
+            <label>Jump Height:</label>
+            <input type="range" id="jumpSlider" min="5" max="25" step="0.5" value="15">
+            <span class="value" id="jumpValue">15.0</span>
+        </div>
+        
+        <div class="debug-control">
+            <label>Gravity:</label>
+            <input type="range" id="gravitySlider" min="10" max="60" step="1" value="30">
+            <span class="value" id="gravityValue">30</span>
+        </div>
+        
+        <div class="debug-control">
+            <label>Mouse Sensitivity:</label>
+            <input type="range" id="sensitivitySlider" min="0.001" max="0.01" step="0.0001" value="0.002">
+            <span class="value" id="sensitivityValue">0.002</span>
+        </div>
+        
+        <div class="debug-control">
+            <label>Damping:</label>
+            <input type="range" id="dampingSlider" min="1" max="15" step="0.5" value="8">
+            <span class="value" id="dampingValue">8.0</span>
+        </div>
+        
+        <button class="debug-toggle" onclick="resetToDefaults()">Reset to Defaults</button>
+    </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+        }
+    }
+    </script>
     <script type="module" src="src/scene.js"></script>
     <script type="module" src="src/player.js"></script>
 </body>
