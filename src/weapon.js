@@ -617,7 +617,7 @@ export class Weapon {
             bullet = this.ammoModel.clone();
             
             // Scale the ammo model appropriately for bullet size
-            bullet.scale.set(0.3, 0.3, 0.3);
+            bullet.scale.set(2, 2, 2);
             
             // Ensure materials are visible and mark as bullet
             bullet.traverse((child) => {
@@ -777,7 +777,7 @@ export class Weapon {
         if (!this.model) return new THREE.Vector3();
         
         // Calculate muzzle position based on weapon attachment
-        const muzzleOffset = new THREE.Vector3(0, 0, 1.5); // Forward from weapon
+        const muzzleOffset = new THREE.Vector3(1, -0.3, 0.8); // Forward from weapon
         
         if (this.playerBody) {
             // If attached to player body, calculate world position
