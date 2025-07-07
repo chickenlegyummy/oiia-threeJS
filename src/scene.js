@@ -343,7 +343,9 @@ function setupDebugControls() {
         jump: { slider: 'jumpSlider', value: 'jumpValue', property: 'jumpVelocity' },
         gravity: { slider: 'gravitySlider', value: 'gravityValue', property: 'gravity' },
         sensitivity: { slider: 'sensitivitySlider', value: 'sensitivityValue', property: 'mouseSensitivity' },
-        damping: { slider: 'dampingSlider', value: 'dampingValue', property: 'damping' }
+        damping: { slider: 'dampingSlider', value: 'dampingValue', property: 'damping' },
+        walkBob: { slider: 'walkBobSlider', value: 'walkBobValue', property: 'walkBobIntensity' },
+        runBob: { slider: 'runBobSlider', value: 'runBobValue', property: 'runBobIntensity' }
     };
     
     Object.entries(controls).forEach(([key, control]) => {
@@ -366,7 +368,9 @@ window.resetToDefaults = function() {
         jumpSlider: 15,
         gravitySlider: 30,
         sensitivitySlider: 0.002,
-        dampingSlider: 8
+        dampingSlider: 8,
+        walkBobSlider: 0.02,
+        runBobSlider: 0.035
     };
     
     Object.entries(defaults).forEach(([sliderId, value]) => {

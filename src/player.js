@@ -44,6 +44,23 @@ export class Player {
         this.raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2);
         this.collisionObjects = [];
         
+        // Camera shake and vibration effects
+        this.walkBobTime = 0;
+        this.walkBobIntensity = 0.02;
+        this.walkBobSpeed = 10;
+        this.runBobIntensity = 0.035;
+        this.runBobSpeed = 15;
+        this.crouchBobIntensity = 0.01;
+        this.crouchBobSpeed = 6;
+        this.jumpShakeIntensity = 0.1;
+        this.jumpShakeDuration = 0.2;
+        this.landShakeIntensity = 0.15;
+        this.landShakeDuration = 0.3;
+        this.currentShake = { intensity: 0, duration: 0, time: 0 };
+        this.basePosition = new THREE.Vector3();
+        this.isLanding = false;
+        this.wasInAir = false;
+        
         // Performance tracking
         this.prevTime = performance.now();
         
@@ -290,7 +307,11 @@ export class Player {
             case 'ControlLeft':
             case 'ControlRight':
             case 'KeyC':
-                this.isCrouching = true;
+                if (!this.isCrouching) {
+                    this.isCrouching = true;
+                    // Add slight shake when starting to crouch
+                    this.addCameraShake(0.05, 0.15);
+                }
                 break;
             case 'KeyF':
                 event.preventDefault();
@@ -331,7 +352,11 @@ export class Player {
             case 'ControlLeft':
             case 'ControlRight':
             case 'KeyC':
-                this.isCrouching = false;
+                if (this.isCrouching) {
+                    this.isCrouching = false;
+                    // Add slight shake when stopping crouch
+                    this.addCameraShake(0.05, 0.15);
+                }
                 break;
         }
     }
@@ -340,6 +365,10 @@ export class Player {
         if (this.canJump) {
             this.velocity.y += this.jumpVelocity;
             this.canJump = false;
+            this.wasInAir = true;
+            
+            // Add jump shake effect
+            this.addCameraShake(this.jumpShakeIntensity, this.jumpShakeDuration);
         }
     }
     
@@ -359,11 +388,104 @@ export class Player {
             if (distance < targetHeight) {
                 this.camera.position.y = intersections[0].point.y + targetHeight;
                 this.velocity.y = Math.max(0, this.velocity.y);
+                
+                // Landing effect
+                if (!this.canJump && this.wasInAir) {
+                    this.addCameraShake(this.landShakeIntensity, this.landShakeDuration);
+                    this.wasInAir = false;
+                }
+                
                 this.canJump = true;
             }
         }
     }
     
+    addCameraShake(intensity, duration) {
+        this.currentShake = {
+            intensity: intensity,
+            duration: duration,
+            time: 0
+        };
+    }
+    
+    applyCameraEffects(delta) {
+        // Store the base position
+        this.basePosition.copy(this.camera.position);
+        
+        // Apply walking bob effect
+        this.applyWalkingBob(delta);
+        
+        // Apply camera shake effects
+        this.applyCameraShake(delta);
+    }
+    
+    applyWalkingBob(delta) {
+        const isMoving = this.moveForward || this.moveBackward || this.moveLeft || this.moveRight;
+        
+        if (isMoving && this.canJump) {
+            // Update walk bob time
+            let bobSpeed = this.walkBobSpeed;
+            let bobIntensity = this.walkBobIntensity;
+            
+            if (this.isCrouching) {
+                bobSpeed = this.crouchBobSpeed;
+                bobIntensity = this.crouchBobIntensity;
+            } else if (this.isRunning) {
+                bobSpeed = this.runBobSpeed;
+                bobIntensity = this.runBobIntensity;
+            }
+            
+            this.walkBobTime += delta * bobSpeed;
+            
+            // Apply vertical bob (Y-axis)
+            const verticalBob = Math.sin(this.walkBobTime * 2) * bobIntensity;
+            this.camera.position.y += verticalBob;
+            
+            // Apply horizontal sway (X and Z-axis) for more realistic movement
+            const horizontalBob = Math.sin(this.walkBobTime) * bobIntensity * 0.3;
+            const forwardBob = Math.cos(this.walkBobTime * 0.5) * bobIntensity * 0.2;
+            
+            // Apply sway relative to camera direction
+            const sideways = new THREE.Vector3();
+            sideways.crossVectors(this.camera.getWorldDirection(new THREE.Vector3()), new THREE.Vector3(0, 1, 0));
+            sideways.normalize();
+            
+            this.camera.position.add(sideways.multiplyScalar(horizontalBob));
+            
+            // Slight forward/backward bob
+            const forward = this.camera.getWorldDirection(new THREE.Vector3());
+            this.camera.position.add(forward.multiplyScalar(forwardBob));
+            
+        } else {
+            // Gradually reduce bob time when not moving
+            this.walkBobTime *= 0.95;
+        }
+    }
+    
+    applyCameraShake(delta) {
+        if (this.currentShake.intensity > 0) {
+            this.currentShake.time += delta;
+            
+            // Calculate shake intensity with falloff
+            const progress = this.currentShake.time / this.currentShake.duration;
+            const intensity = this.currentShake.intensity * (1 - progress);
+            
+            if (progress < 1) {
+                // Apply random shake
+                const shakeX = (Math.random() - 0.5) * intensity;
+                const shakeY = (Math.random() - 0.5) * intensity;
+                const shakeZ = (Math.random() - 0.5) * intensity;
+                
+                this.camera.position.x += shakeX;
+                this.camera.position.y += shakeY;
+                this.camera.position.z += shakeZ;
+            } else {
+                // Reset shake
+                this.currentShake = { intensity: 0, duration: 0, time: 0 };
+            }
+        }
+    }
+
     update() {
         if (!this.isLocked) return;
         
@@ -430,17 +552,19 @@ export class Player {
         // Prevent falling through the world
         const minHeight = this.isCrouching ? this.crouchHeight : this.height;
         if (this.camera.position.y < minHeight) {
+            // Landing effect when hitting the floor
+            if (!this.canJump && this.wasInAir) {
+                this.addCameraShake(this.landShakeIntensity, this.landShakeDuration);
+                this.wasInAir = false;
+            }
+            
             this.camera.position.y = minHeight;
             this.velocity.y = 0;
             this.canJump = true;
         }
         
-        // Add subtle camera bob when moving
-        if ((this.moveForward || this.moveBackward || this.moveLeft || this.moveRight) && this.canJump) {
-            const bobIntensity = this.isRunning ? 0.008 : 0.004;
-            const bobSpeed = this.isRunning ? 12 : 8;
-            this.camera.position.y += Math.sin(time * bobSpeed * 0.001) * bobIntensity;
-        }
+        // Apply camera effects (walking bob and shake)
+        this.applyCameraEffects(clampedDelta);
     }
     
     toggleBodyVisibility() {
