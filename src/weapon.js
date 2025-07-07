@@ -2,17 +2,22 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export class Weapon {
-    constructor(camera, scene, audioListener, playerBody = null) {
+    constructor(camera, scene, audioListener, playerBody = null, player = null) {
         this.camera = camera;
         this.scene = scene;
         this.audioListener = audioListener;
         this.playerBody = playerBody; // Player body to attach weapon to
+        this.player = player; // Reference to player for accessing euler rotation
         
         // Weapon properties
         this.model = null;
         this.animations = {};
         this.mixer = null;
         this.stateMachine = null;
+        
+        // Camera rotation tracking for weapon orientation
+        this.lastCameraRotation = new THREE.Euler();
+        this.weaponRotationOffset = new THREE.Euler(); // Base rotation offset
         
         // Bullet effects
         this.activeBullets = [];
@@ -317,21 +322,26 @@ export class Weapon {
         if (this.playerBody) {
             // Position weapon relative to player body (right hand position)
             this.model.position.set(0.4, 0.2, -1.3); // Right side, chest/arm level, slightly forward
-            this.model.setRotationFromEuler(new THREE.Euler(
+            
+            // Store the base rotation offset for CS2-style weapon movement
+            this.weaponRotationOffset.set(
                 THREE.MathUtils.degToRad(-10), // Slight downward angle
                 THREE.MathUtils.degToRad(90),  // Angled outward
                 THREE.MathUtils.degToRad(5)    // Slight roll
-            ));
+            );
+            this.model.setRotationFromEuler(this.weaponRotationOffset);
+            
             this.playerBody.add(this.model);
             console.log('Weapon attached to player body');
         } else {
             // Fallback to camera attachment
             this.model.position.set(1, 0, 10);
-            this.model.setRotationFromEuler(new THREE.Euler(
+            this.weaponRotationOffset.set(
                 THREE.MathUtils.degToRad(5), 
                 THREE.MathUtils.degToRad(185), 
                 0
-            ));
+            );
+            this.model.setRotationFromEuler(this.weaponRotationOffset);
             this.camera.add(this.model);
             console.log('Weapon attached to camera (fallback)');
         }
@@ -341,12 +351,13 @@ export class Weapon {
         
         console.log('Weapon attached at position:', this.model.position);
         console.log('Weapon scale:', this.model.scale);
-        console.log('Weapon rotation:', this.model.rotation);
+        console.log('Weapon base rotation:', this.weaponRotationOffset);
         console.log('Weapon visible:', this.model.visible);
     }
     
-    setPlayerBody(playerBody) {
+    setPlayerBody(playerBody, player = null) {
         this.playerBody = playerBody;
+        this.player = player;
         
         // Re-attach weapon if model is already loaded
         if (this.model && playerBody) {
@@ -798,6 +809,9 @@ export class Weapon {
     update(deltaTime) {
         if (!this.isLoaded) return;
         
+        // Update weapon rotation to follow camera (CS2-style)
+        this.updateWeaponRotation();
+        
         // Update animations
         if (this.mixer) {
             this.mixer.update(deltaTime);
@@ -853,5 +867,66 @@ export class Weapon {
         if (this.onAmmoChange) {
             this.onAmmoChange(this.magAmmo, this.totalAmmo);
         }
+    }
+
+    updateWeaponRotation() {
+        if (!this.model || !this.player) return;
+        
+        // Get player's euler rotation for accurate camera tracking
+        const cameraEuler = this.player.euler;
+        
+        if (!cameraEuler) return;
+        
+        // Calculate weapon rotation based on camera rotation
+        // In CS2/modern FPS style, the weapon should:
+        // 1. Follow camera pitch (up/down look) with some dampening
+        // 2. Follow camera yaw (left/right turn) slightly for natural sway
+        // 3. Add subtle roll based on movement for realism
+        // 4. Respond to player movement state (running, crouching)
+        // 5. Maintain base rotation offset
+        
+        let pitchInfluence = 0.4; // How much camera pitch affects weapon (0-1)
+        let yawInfluence = 0.2;   // How much camera yaw affects weapon beyond body rotation (0-1)
+        let rollInfluence = 0.1;  // Subtle roll effect based on yaw movement
+        
+        // Adjust influences based on player state
+        if (this.player.isRunning) {
+            pitchInfluence *= 1.2; // More weapon movement when running
+            yawInfluence *= 1.3;
+            rollInfluence *= 1.5;
+        } else if (this.player.isCrouching) {
+            pitchInfluence *= 0.7; // More stable when crouching
+            yawInfluence *= 0.6;
+            rollInfluence *= 0.5;
+        }
+        
+        // Calculate yaw movement speed for dynamic roll effect
+        const yawDelta = cameraEuler.y - this.lastCameraRotation.y;
+        const rollFromYaw = yawDelta * rollInfluence * 50; // Scale for visible effect
+        
+        // Store current rotation for next frame
+        this.lastCameraRotation.copy(cameraEuler);
+        
+        // Calculate the weapon's target rotation
+        const targetRotation = new THREE.Euler(
+            this.weaponRotationOffset.x + (cameraEuler.x * pitchInfluence), // Pitch follows camera
+            this.weaponRotationOffset.y + (cameraEuler.y * yawInfluence),   // Slight yaw sway
+            this.weaponRotationOffset.z + rollFromYaw, // Dynamic roll from movement
+            'YXZ'
+        );
+        
+        // Apply smooth interpolation for natural movement
+        let lerpFactor = 0.12; // Base smoothing factor (0-1, higher = faster response)
+        
+        // Adjust lerp factor based on player state
+        if (this.player.isRunning) {
+            lerpFactor *= 1.4; // Faster response when running
+        } else if (this.player.isCrouching) {
+            lerpFactor *= 0.7; // Slower, more stable when crouching
+        }
+        
+        this.model.rotation.x = THREE.MathUtils.lerp(this.model.rotation.x, targetRotation.x, lerpFactor);
+        this.model.rotation.y = THREE.MathUtils.lerp(this.model.rotation.y, targetRotation.y, lerpFactor);
+        this.model.rotation.z = THREE.MathUtils.lerp(this.model.rotation.z, targetRotation.z, lerpFactor * 0.5); // Slower roll interpolation
     }
 }

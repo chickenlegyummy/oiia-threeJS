@@ -210,7 +210,7 @@ async function initializeSystems() {
         console.log('Starting initialization of FPS systems...');
         
         // Initialize weapon system with player body
-        weapon = new Weapon(camera, scene, audioListener, player.getPlayerBody());
+        weapon = new Weapon(camera, scene, audioListener, player.getPlayerBody(), player);
         
         // Wait a bit for weapon to load, then check
         setTimeout(() => {
