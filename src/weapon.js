@@ -21,7 +21,7 @@ export class Weapon {
         
         // Bullet effects
         this.activeBullets = [];
-        this.bulletSpeed = 100;
+        this.bulletSpeed = 100; // Increased speed for precise hitbox collision
         this.bulletLifetime = 3.0; // seconds
         this.maxBulletTrails = 50;
         this.ammoModel = null; // Loaded ammo.glb model
@@ -33,7 +33,7 @@ export class Weapon {
         this.shootTimer = 0.0;
         this.magAmmo = 30;
         this.maxAmmo = 30;
-        this.totalAmmo = 120;
+        this.totalAmmo = 1200;
         this.damage = 10;
         this.range = 100;
         
@@ -52,6 +52,12 @@ export class Weapon {
         // HUD elements
         this.onAmmoChange = null; // Callback for ammo updates
         
+        // Debug mode
+        this.debugMode = false;
+        this.debugHelpers = new Map(); // Store debug wireframes
+        this.bulletColliders = new Map(); // Store bullet colliders
+        this.targetColliders = new Map(); // Store target colliders
+        
         this.init();
     }
     
@@ -67,9 +73,15 @@ export class Weapon {
             this.setupInput();
             this.isLoaded = true;
             
+            // Expose debug command to global console
+            window.weaponDebug = () => this.toggleDebugMode();
+            window.registerTarget = (target, size) => this.registerTarget(target, size);
+            
             console.log('Weapon loaded successfully, model:', this.model);
             console.log('Ammo model loaded:', this.ammoModel);
             console.log('Weapon in camera children:', this.camera.children.includes(this.model));
+            console.log('Debug command available: weaponDebug()');
+            console.log('Target registration: registerTarget(mesh, {width, height, depth})');
         } catch (error) {
             console.error('Error loading weapon:', error);
         }
@@ -417,25 +429,15 @@ export class Weapon {
             this.animations.shoot.action.play();
         }
         
-        // Show muzzle flash
-        this.showMuzzleFlash();
-        
-        // Create bullet trail visual effect
+        // Create bullet that follows crosshair exactly
         const muzzlePos = this.getGunMuzzlePosition();
         const shootDirection = new THREE.Vector3();
         this.camera.getWorldDirection(shootDirection);
         
-        // Add slight random spread for realism
-        const spread = 0.02;
-        shootDirection.x += (Math.random() - 0.5) * spread;
-        shootDirection.y += (Math.random() - 0.5) * spread;
-        shootDirection.z += (Math.random() - 0.5) * spread;
+        // No spread - bullets must follow crosshair exactly for precise hitbox collision
         shootDirection.normalize();
         
         this.createBulletTrail(muzzlePos, shootDirection);
-        
-        // Create shell casing ejection
-        this.createShellCasing();
         
         // Play sound
         if (this.shootSound && this.shootSound.buffer) {
@@ -445,16 +447,12 @@ export class Weapon {
             this.shootSound.play();
         }
         
-        // Perform raycast
-        this.performRaycast();
+        // No immediate raycast - bullets will handle collision detection
         
         // Update HUD
         if (this.onAmmoChange) {
             this.onAmmoChange(this.magAmmo, this.totalAmmo);
         }
-        
-        // Create shell casing ejection effect
-        this.createShellCasing();
         
         return true;
     }
@@ -617,7 +615,7 @@ export class Weapon {
             bullet = this.ammoModel.clone();
             
             // Scale the ammo model appropriately for bullet size
-            bullet.scale.set(2, 2, 2);
+            bullet.scale.set(5, 5, 5);
             
             // Ensure materials are visible and mark as bullet
             bullet.traverse((child) => {
@@ -661,7 +659,15 @@ export class Weapon {
         // Add to scene
         this.scene.add(bullet);
         
-        // Create bullet object with properties
+        // Create rectangular collider for this bullet
+        this.createBulletCollider(bullet);
+        
+        // Add debug helper if debug mode is on
+        if (this.debugMode) {
+            this.addDebugHelper(bullet);
+        }
+        
+        // Create bullet object with properties - bullets now act as hitboxes
         const bulletObj = {
             mesh: bullet,
             velocity: direction.clone().multiplyScalar(this.bulletSpeed),
@@ -738,15 +744,24 @@ export class Weapon {
         for (let i = this.activeBullets.length - 1; i >= 0; i--) {
             const bullet = this.activeBullets[i];
             
+            // Store previous position for collision detection
+            const prevPosition = bullet.mesh.position.clone();
+            
             // Update position
             bullet.mesh.position.add(bullet.velocity.clone().multiplyScalar(deltaTime));
             
-            // Add bullet rotation for visual effect
-            if (this.ammoModel) {
-                bullet.mesh.rotation.z += deltaTime * 10; // Spinning bullet
-            } else {
-                bullet.mesh.rotation.y += deltaTime * 10;
+            // Update bullet collider position
+            const collider = this.bulletColliders.get(bullet.mesh);
+            if (collider) {
+                collider.position.copy(bullet.mesh.position);
+                collider.rotation.copy(bullet.mesh.rotation);
             }
+            
+            // Perform collision detection for this bullet
+            this.checkBulletColliderCollision(bullet, prevPosition);
+            
+            // Add bullet rotation for visual effect - spin around Y-axis
+            bullet.mesh.rotation.y += deltaTime * 15; // Consistent Y-axis spinning for all bullet types
             
             // Update lifetime
             bullet.life -= deltaTime;
@@ -767,12 +782,192 @@ export class Weapon {
             
             // Remove expired bullets
             if (bullet.life <= 0) {
+                this.removeDebugHelper(bullet.mesh);
+                this.removeBulletCollider(bullet.mesh);
                 this.scene.remove(bullet.mesh);
                 this.activeBullets.splice(i, 1);
             }
         }
     }
     
+    checkBulletColliderCollision(bullet, prevPosition) {
+        const bulletCollider = this.bulletColliders.get(bullet);
+        if (!bulletCollider) return false;
+        
+        // Get all target colliders in the scene
+        const targetColliders = [];
+        this.targetColliders.forEach((collider, target) => {
+            targetColliders.push(collider);
+        });
+        
+        // Also check against regular scene objects for walls/environment
+        const environmentTargets = [];
+        this.scene.traverse((child) => {
+            if (child.isMesh && 
+                !this.isWeaponMesh(child) && 
+                !child.userData.isBullet && 
+                !child.userData.isBulletCollider &&
+                !child.userData.isTargetCollider) {
+                environmentTargets.push(child);
+            }
+        });
+        
+        // Create raycaster from previous position to current position
+        const direction = new THREE.Vector3().subVectors(bullet.mesh.position, prevPosition);
+        const distance = direction.length();
+        
+        if (distance === 0) return false;
+        
+        direction.normalize();
+        const raycaster = new THREE.Raycaster(prevPosition, direction, 0, distance);
+        
+        // Check collisions with target colliders first
+        const targetIntersects = raycaster.intersectObjects(targetColliders, false);
+        if (targetIntersects.length > 0) {
+            const hit = targetIntersects[0];
+            const hitCollider = hit.object;
+            const parentTarget = hitCollider.userData.parentTarget;
+            
+            // Move bullet to hit position
+            bullet.mesh.position.copy(hit.point);
+            bulletCollider.position.copy(hit.point);
+            
+            // Create hit effect
+            this.createHitEffect(hit.point, hit.face.normal);
+            
+            // Handle target hit
+            if (parentTarget && parentTarget.userData.isTarget) {
+                this.onTargetHit(parentTarget, hit);
+            }
+            
+            // Remove bullet after hit
+            this.removeDebugHelper(bullet.mesh);
+            this.removeBulletCollider(bullet.mesh);
+            this.scene.remove(bullet.mesh);
+            const bulletIndex = this.activeBullets.indexOf(bullet);
+            if (bulletIndex > -1) {
+                this.activeBullets.splice(bulletIndex, 1);
+            }
+            
+            return true;
+        }
+        
+        // Check collisions with environment
+        const environmentIntersects = raycaster.intersectObjects(environmentTargets, true);
+        if (environmentIntersects.length > 0) {
+            const hit = environmentIntersects[0];
+            
+            // Move bullet to hit position
+            bullet.mesh.position.copy(hit.point);
+            bulletCollider.position.copy(hit.point);
+            
+            // Create hit effect
+            this.createHitEffect(hit.point, hit.face.normal);
+            
+            // Remove bullet after hit
+            this.removeDebugHelper(bullet.mesh);
+            this.removeBulletCollider(bullet.mesh);
+            this.scene.remove(bullet.mesh);
+            const bulletIndex = this.activeBullets.indexOf(bullet);
+            if (bulletIndex > -1) {
+                this.activeBullets.splice(bulletIndex, 1);
+            }
+            
+            return true;
+        }
+        
+        return false;
+    }
+    
+    createBulletCollider(bullet) {
+        // Create a rectangular collider for the bullet
+        const colliderGeometry = new THREE.BoxGeometry(5, 5, 5); // Small rectangular hitbox
+        const colliderMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.3,
+            visible: this.debugMode // Only visible in debug mode
+        });
+        
+        const collider = new THREE.Mesh(colliderGeometry, colliderMaterial);
+        collider.userData.isBulletCollider = true;
+        collider.userData.parentBullet = bullet;
+        
+        // Position collider to match bullet
+        collider.position.copy(bullet.position);
+        collider.rotation.copy(bullet.rotation);
+        
+        // Add collider to scene and track it
+        this.scene.add(collider);
+        this.bulletColliders.set(bullet, collider);
+        
+        return collider;
+    }
+    
+    removeBulletCollider(bullet) {
+        const collider = this.bulletColliders.get(bullet);
+        if (collider) {
+            this.scene.remove(collider);
+            this.bulletColliders.delete(bullet);
+        }
+    }
+    
+    createTargetCollider(target, size = { width: 1, height: 1, depth: 1 }) {
+        // Create a rectangular collider for the target
+        const colliderGeometry = new THREE.BoxGeometry(size.width, size.height, size.depth);
+        const colliderMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            transparent: true,
+            opacity: 0.3,
+            visible: this.debugMode // Only visible in debug mode
+        });
+        
+        const collider = new THREE.Mesh(colliderGeometry, colliderMaterial);
+        collider.userData.isTargetCollider = true;
+        collider.userData.parentTarget = target;
+        
+        // Position collider to match target
+        collider.position.copy(target.position);
+        collider.rotation.copy(target.rotation);
+        
+        // Add collider to scene and track it
+        this.scene.add(collider);
+        this.targetColliders.set(target, collider);
+        
+        return collider;
+    }
+    
+    removeTargetCollider(target) {
+        const collider = this.targetColliders.get(target);
+        if (collider) {
+            this.scene.remove(collider);
+            this.targetColliders.delete(target);
+        }
+    }
+
+    // Public method to register a target with a collider
+    registerTarget(target, colliderSize = { width: 1, height: 1, depth: 1 }) {
+        // Mark the target
+        target.userData.isTarget = true;
+        
+        // Create collider for the target
+        this.createTargetCollider(target, colliderSize);
+        
+        // Add debug helper if debug mode is active
+        if (this.debugMode) {
+            this.addDebugHelper(target);
+        }
+        
+        console.log('Target registered with collider:', target);
+    }
+    
+    // Public method to unregister a target
+    unregisterTarget(target) {
+        this.removeTargetCollider(target);
+        this.removeDebugHelper(target);
+        target.userData.isTarget = false;
+    }
+
     getGunMuzzlePosition() {
         if (!this.model) return new THREE.Vector3();
         
@@ -830,28 +1025,6 @@ export class Weapon {
         if (this.shootTimer > 0) {
             this.shootTimer -= deltaTime;
         }
-        
-        // Update muzzle flash
-        if (this.flashTimer > 0) {
-            this.flashTimer -= deltaTime;
-            const alpha = this.flashTimer / this.flashDuration;
-            this.muzzleFlash.material.opacity = alpha;
-            
-            // Update muzzle particles opacity
-            if (this.muzzleParticles) {
-                this.muzzleParticles.material.opacity = alpha * 0.8;
-            }
-            
-            if (this.flashTimer <= 0) {
-                this.muzzleFlash.visible = false;
-                if (this.muzzleParticles) {
-                    this.muzzleParticles.visible = false;
-                }
-            }
-        }
-        
-        // Update bullet trails
-        this.updateBullets(deltaTime);
     }
     
     // Getters for HUD
@@ -928,5 +1101,85 @@ export class Weapon {
         this.model.rotation.x = THREE.MathUtils.lerp(this.model.rotation.x, targetRotation.x, lerpFactor);
         this.model.rotation.y = THREE.MathUtils.lerp(this.model.rotation.y, targetRotation.y, lerpFactor);
         this.model.rotation.z = THREE.MathUtils.lerp(this.model.rotation.z, targetRotation.z, lerpFactor * 0.5); // Slower roll interpolation
+    }
+
+    toggleDebugMode() {
+        this.debugMode = !this.debugMode;
+        console.log('🐛 Weapon Debug Mode:', this.debugMode ? 'ON' : 'OFF');
+        
+        if (this.debugMode) {
+            console.log('🟢 Green wireframes = Bullets');
+            console.log('🔴 Red wireframes = Targets');
+            console.log('📦 Rectangular colliders = Hitboxes');
+        }
+        
+        // Update collider visibility
+        this.bulletColliders.forEach((collider) => {
+            collider.material.visible = this.debugMode;
+        });
+        
+        this.targetColliders.forEach((collider) => {
+            collider.material.visible = this.debugMode;
+        });
+        
+        if (!this.debugMode) {
+            // Remove all debug helpers when turning off debug mode
+            this.debugHelpers.forEach((helper, mesh) => {
+                this.scene.remove(helper);
+            });
+            this.debugHelpers.clear();
+        } else {
+            // Add debug helpers for existing objects
+            this.addDebugHelpersToScene();
+        }
+    }
+    
+    addDebugHelpersToScene() {
+        // Add debug helpers for all targets in the scene
+        this.scene.traverse((child) => {
+            if (child.isMesh && child.userData.isTarget) {
+                this.addDebugHelper(child);
+            }
+        });
+        
+        // Add debug helpers for all active bullets
+        this.activeBullets.forEach(bullet => {
+            this.addDebugHelper(bullet.mesh);
+        });
+    }
+    
+    addDebugHelper(mesh) {
+        if (!this.debugMode || this.debugHelpers.has(mesh)) return;
+        
+        // Create wireframe helper
+        const wireframeGeometry = mesh.geometry ? mesh.geometry : new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        const wireframeMaterial = new THREE.MeshBasicMaterial({
+            color: mesh.userData.isTarget ? 0xff0000 : 0x00ff00, // Red for targets, green for bullets
+            wireframe: true,
+            opacity: 0.7,
+            transparent: true
+        });
+        
+        const wireframe = new THREE.Mesh(wireframeGeometry, wireframeMaterial);
+        
+        // Position wireframe to match the mesh
+        wireframe.position.copy(mesh.position);
+        wireframe.rotation.copy(mesh.rotation);
+        wireframe.scale.copy(mesh.scale);
+        
+        // Make wireframe follow the original mesh
+        mesh.add(wireframe);
+        
+        this.debugHelpers.set(mesh, wireframe);
+    }
+    
+    removeDebugHelper(mesh) {
+        const helper = this.debugHelpers.get(mesh);
+        if (helper) {
+            if (helper.parent) {
+                helper.parent.remove(helper);
+            }
+            this.debugHelpers.delete(mesh);
+        }
     }
 }
