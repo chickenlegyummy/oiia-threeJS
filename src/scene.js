@@ -62,8 +62,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
-// Enhanced lighting setup
-const ambientLight = new THREE.AmbientLight(0x87CEEB, 0.2);
+// Enhanced lighting setup - bright ambient for sunny sky
+const ambientLight = new THREE.AmbientLight(0xB8D4F0, 0.4);
 scene.add(ambientLight);
 
 // Key directional light (sun)
@@ -85,6 +85,23 @@ scene.add(directionalLight);
 const fillLight = new THREE.DirectionalLight(0x87CEEB, 0.3);
 fillLight.position.set(-10, 10, -10);
 scene.add(fillLight);
+
+// Additional sunlight from specified position
+const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+sunLight.position.set(-30, 30, 20);
+sunLight.target.position.set(0, 0, 0);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.width = 2048;
+sunLight.shadow.mapSize.height = 2048;
+sunLight.shadow.camera.near = 0.5;
+sunLight.shadow.camera.far = 100;
+sunLight.shadow.camera.left = -50;
+sunLight.shadow.camera.right = 50;
+sunLight.shadow.camera.top = 50;
+sunLight.shadow.camera.bottom = -50;
+sunLight.shadow.bias = -0.0001;
+scene.add(sunLight);
+scene.add(sunLight.target);
 
 // Create enhanced floor with texture
 const floorGeometry = new THREE.PlaneGeometry(200, 200, 32, 32);
@@ -192,8 +209,8 @@ async function initializeSystems() {
     try {
         console.log('Starting initialization of FPS systems...');
         
-        // Initialize weapon system
-        weapon = new Weapon(camera, scene, audioListener);
+        // Initialize weapon system with player body
+        weapon = new Weapon(camera, scene, audioListener, player.getPlayerBody());
         
         // Wait a bit for weapon to load, then check
         setTimeout(() => {
@@ -201,13 +218,14 @@ async function initializeSystems() {
             console.log('- Weapon object:', weapon);
             console.log('- Weapon loaded:', weapon?.isLoaded);
             console.log('- Weapon model:', weapon?.model);
+            console.log('- Player body children:', player.getPlayerBody()?.children.length);
             console.log('- Camera children:', camera.children.length);
             
             // Force fallback if no weapon visible
-            if (!weapon?.model || camera.children.length === 1) { // Only audio listener
+            if (!weapon?.model) {
                 console.log('Forcing weapon fallback model...');
                 weapon?.createFallbackModel();
-                weapon?.attachToCamera();
+                weapon?.attachWeapon();
             }
         }, 2000);
         

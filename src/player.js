@@ -15,6 +15,9 @@ export class Player {
         this.isCrouching = false;
         this.isRunning = false;
         
+        // Player body
+        this.body = null;
+        
         // Movement settings
         this.velocity = new THREE.Vector3();
         this.direction = new THREE.Vector3();
@@ -45,6 +48,80 @@ export class Player {
         this.prevTime = performance.now();
         
         this.init();
+        this.createPlayerBody();
+    }
+    
+    createPlayerBody() {
+        // Create capsule geometry for the player body
+        const bodyGroup = new THREE.Group();
+        
+        // Create capsule using cylinder + two spheres
+        const cylinderHeight = this.height - (this.radius * 2);
+        const cylinderGeometry = new THREE.CylinderGeometry(this.radius, this.radius, cylinderHeight);
+        const sphereGeometry = new THREE.SphereGeometry(this.radius);
+        
+        // Create a subtle material for the body (slightly visible for testing)
+        const bodyMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x00ff00, 
+            transparent: true, 
+            opacity: 0.1,  // Slightly visible for testing
+            wireframe: false
+        });
+        
+        // Create cylinder (main body)
+        const cylinder = new THREE.Mesh(cylinderGeometry, bodyMaterial);
+        cylinder.position.y = 0;
+        cylinder.userData.isPlayerBody = true;
+        bodyGroup.add(cylinder);
+        
+        // Create top sphere (head area)
+        const topSphere = new THREE.Mesh(sphereGeometry, bodyMaterial);
+        topSphere.position.y = cylinderHeight / 2 + this.radius;
+        topSphere.userData.isPlayerBody = true;
+        bodyGroup.add(topSphere);
+        
+        // Create bottom sphere (feet area)  
+        const bottomSphere = new THREE.Mesh(sphereGeometry, bodyMaterial);
+        bottomSphere.position.y = -(cylinderHeight / 2 + this.radius);
+        bottomSphere.userData.isPlayerBody = true;
+        bodyGroup.add(bottomSphere);
+        
+        // Add arms for better visualization
+        const armGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.6);
+        const armMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0x0000ff, 
+            transparent: true, 
+            opacity: 0.2
+        });
+        
+        // Right arm
+        const rightArm = new THREE.Mesh(armGeometry, armMaterial);
+        rightArm.position.set(0.3, cylinderHeight / 4, 0);
+        rightArm.rotation.z = Math.PI / 4;
+        rightArm.userData.isPlayerBody = true;
+        bodyGroup.add(rightArm);
+        
+        // Left arm
+        const leftArm = new THREE.Mesh(armGeometry, armMaterial);
+        leftArm.position.set(-0.3, cylinderHeight / 4, 0);
+        leftArm.rotation.z = -Math.PI / 4;
+        leftArm.userData.isPlayerBody = true;
+        bodyGroup.add(leftArm);
+        
+        // Position the body group
+        this.body = bodyGroup;
+        this.body.position.copy(this.camera.position);
+        this.body.position.y -= this.height / 2; // Adjust so camera is at head level
+        
+        // Add body to scene
+        this.scene.add(this.body);
+        
+        // Update collision objects to exclude the newly created body
+        this.updateCollisionObjects();
+        
+        console.log('Player capsule body created and added to scene');
+        console.log('Body position:', this.body.position);
+        console.log('Body children count:', this.body.children.length);
     }
     
     init() {
@@ -111,10 +188,53 @@ export class Player {
         
         // Add collision objects (you can add more objects here)
         this.scene.traverse((child) => {
-            if (child.isMesh && child !== this.camera) {
+            if (child.isMesh && child !== this.camera && child.parent !== this.body) {
                 this.collisionObjects.push(child);
             }
         });
+        
+        // Update collision objects when body is created (exclude body parts)
+        this.updateCollisionObjects();
+    }
+    
+    updateCollisionObjects() {
+        // Clear existing collision objects
+        this.collisionObjects = [];
+        
+        // Add all mesh objects except camera and player body parts
+        this.scene.traverse((child) => {
+            if (child.isMesh && 
+                child !== this.camera && 
+                child.parent !== this.body && 
+                child !== this.body &&
+                !this.isPlayerBodyPart(child)) {
+                this.collisionObjects.push(child);
+            }
+        });
+    }
+    
+    isPlayerBodyPart(object) {
+        if (!object) return false;
+        
+        // Check userData flags
+        if (object.userData && (object.userData.isPlayerBody || object.userData.isWeapon)) {
+            return true;
+        }
+        
+        // Check if object is part of the body hierarchy
+        if (!this.body) return false;
+        
+        // Check if object is a direct child of the body
+        if (object.parent === this.body) return true;
+        
+        // Check if object is part of any attachment to the body
+        let parent = object.parent;
+        while (parent) {
+            if (parent === this.body) return true;
+            parent = parent.parent;
+        }
+        
+        return false;
     }
     
     requestPointerLock() {
@@ -178,6 +298,10 @@ export class Player {
                     this.requestPointerLock();
                 }
                 break;
+            case 'KeyV':
+                // Toggle body visibility for debugging
+                this.toggleBodyVisibility();
+                break;
         }
     }
     
@@ -224,7 +348,9 @@ export class Player {
         this.raycaster.ray.origin.copy(this.camera.position);
         this.raycaster.ray.direction.set(0, -1, 0);
         
-        const intersections = this.raycaster.intersectObjects(this.collisionObjects);
+        // Filter out player body parts from collision detection
+        const validCollisionObjects = this.collisionObjects.filter(obj => !this.isPlayerBodyPart(obj));
+        const intersections = this.raycaster.intersectObjects(validCollisionObjects);
         
         const targetHeight = this.isCrouching ? this.crouchHeight : this.height;
         
@@ -289,6 +415,18 @@ export class Player {
         // Check collisions and adjust position
         this.checkCollisions();
         
+        // Update body position after collision checks to prevent conflicts
+        if (this.body) {
+            const targetPosition = this.camera.position.clone();
+            targetPosition.y -= this.height / 2; // Keep body centered below camera
+            
+            // Smooth position update to prevent jittering
+            this.body.position.lerp(targetPosition, 0.6);
+            
+            // Update body rotation to match camera's Y rotation only (not pitch)
+            this.body.rotation.y = this.euler.y;
+        }
+        
         // Prevent falling through the world
         const minHeight = this.isCrouching ? this.crouchHeight : this.height;
         if (this.camera.position.y < minHeight) {
@@ -303,5 +441,29 @@ export class Player {
             const bobSpeed = this.isRunning ? 12 : 8;
             this.camera.position.y += Math.sin(time * bobSpeed * 0.001) * bobIntensity;
         }
+    }
+    
+    toggleBodyVisibility() {
+        if (this.body) {
+            this.body.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.opacity = child.material.opacity > 0 ? 0.0 : 0.3;
+                }
+            });
+        }
+    }
+    
+    setBodyVisibility(visible) {
+        if (this.body) {
+            this.body.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    child.material.opacity = visible ? 0.3 : 0.0;
+                }
+            });
+        }
+    }
+
+    getPlayerBody() {
+        return this.body;
     }
 }

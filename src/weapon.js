@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export class Weapon {
-    constructor(camera, scene, audioListener) {
+    constructor(camera, scene, audioListener, playerBody = null) {
         this.camera = camera;
         this.scene = scene;
         this.audioListener = audioListener;
+        this.playerBody = playerBody; // Player body to attach weapon to
         
         // Weapon properties
         this.model = null;
@@ -49,7 +50,7 @@ export class Weapon {
             this.setupMuzzleFlash();
             this.setupAudio();
             this.setupAnimations();
-            this.attachToCamera();
+            this.attachWeapon();
             this.setupInput();
             this.isLoaded = true;
             
@@ -192,10 +193,10 @@ export class Weapon {
         );
     }
     
-    attachToCamera() {
+    attachWeapon() {
         if (!this.model) return;
         
-        // Ensure all materials are visible
+        // Ensure all materials are visible and mark as weapon
         this.model.traverse((child) => {
             if (child.isMesh) {
                 if (child.material) {
@@ -204,37 +205,66 @@ export class Weapon {
                 }
                 child.castShadow = true;
                 child.receiveShadow = true;
+                
+                // Mark as weapon part to exclude from collisions
+                child.userData.isWeapon = true;
             }
         });
         
-        // Position and scale the weapon based on the reference project
-        // Reference uses: scale(0.05, 0.05, 0.05), position(0.04, -0.02, 0.0), rotation(5deg, 185deg, 0deg)
-        this.model.scale.set(0.05, 0.05, 0.05);
-        this.model.position.set(0.04, -0.02, 0.0);
-        this.model.setRotationFromEuler(new THREE.Euler(
-            THREE.MathUtils.degToRad(5), 
-            THREE.MathUtils.degToRad(185), 
-            0
-        ));
-        
-        // Ensure model is visible
-        this.model.visible = true;
+        // Position and scale the weapon
+        this.model.scale.set(0.3, 0.3, 0.3);
         
         // Add muzzle flash to weapon
         if (this.muzzleFlash) {
-            this.muzzleFlash.position.set(-0.3, -0.5, 8.3);
+            this.muzzleFlash.position.set(0.4, 0.2, -1.3);
             this.muzzleFlash.rotateY(Math.PI);
             this.model.add(this.muzzleFlash);
         }
         
-        // Attach weapon to camera
-        this.camera.add(this.model);
+        // Attach weapon to player body if available, otherwise to camera
+        if (this.playerBody) {
+            // Position weapon relative to player body (right hand position)
+            this.model.position.set(0.4, 0.2, -1.3); // Right side, chest/arm level, slightly forward
+            this.model.setRotationFromEuler(new THREE.Euler(
+                THREE.MathUtils.degToRad(-10), // Slight downward angle
+                THREE.MathUtils.degToRad(90),  // Angled outward
+                THREE.MathUtils.degToRad(5)    // Slight roll
+            ));
+            this.playerBody.add(this.model);
+            console.log('Weapon attached to player body');
+        } else {
+            // Fallback to camera attachment
+            this.model.position.set(1, 0, 10);
+            this.model.setRotationFromEuler(new THREE.Euler(
+                THREE.MathUtils.degToRad(5), 
+                THREE.MathUtils.degToRad(185), 
+                0
+            ));
+            this.camera.add(this.model);
+            console.log('Weapon attached to camera (fallback)');
+        }
         
-        console.log('Weapon attached to camera at position:', this.model.position);
+        // Ensure model is visible
+        this.model.visible = true;
+        
+        console.log('Weapon attached at position:', this.model.position);
         console.log('Weapon scale:', this.model.scale);
         console.log('Weapon rotation:', this.model.rotation);
         console.log('Weapon visible:', this.model.visible);
-        console.log('Camera children count:', this.camera.children.length);
+    }
+    
+    setPlayerBody(playerBody) {
+        this.playerBody = playerBody;
+        
+        // Re-attach weapon if model is already loaded
+        if (this.model && playerBody) {
+            // Remove from current parent
+            if (this.model.parent) {
+                this.model.parent.remove(this.model);
+            }
+            // Re-attach to new parent
+            this.attachWeapon();
+        }
     }
     
     setupInput() {
