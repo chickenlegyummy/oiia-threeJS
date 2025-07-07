@@ -73,15 +73,20 @@ export class Weapon {
             this.setupInput();
             this.isLoaded = true;
             
+            // Scan for existing targets on initialization
+            this.scanForNewTargets();
+            
             // Expose debug command to global console
             window.weaponDebug = () => this.toggleDebugMode();
             window.registerTarget = (target, size) => this.registerTarget(target, size);
+            window.scanTargets = () => this.scanForNewTargets();
             
             console.log('Weapon loaded successfully, model:', this.model);
             console.log('Ammo model loaded:', this.ammoModel);
             console.log('Weapon in camera children:', this.camera.children.includes(this.model));
             console.log('Debug command available: weaponDebug()');
             console.log('Target registration: registerTarget(mesh, {width, height, depth})');
+            console.log('Manual target scan: scanTargets()');
         } catch (error) {
             console.error('Error loading weapon:', error);
         }
@@ -919,20 +924,34 @@ export class Weapon {
             color: 0xff0000,
             transparent: true,
             opacity: 0.3,
-            visible: this.debugMode // Only visible in debug mode
+            visible: this.debugMode, // Only visible in debug mode
+            wireframe: this.debugMode // Show as wireframe in debug mode
         });
         
         const collider = new THREE.Mesh(colliderGeometry, colliderMaterial);
         collider.userData.isTargetCollider = true;
         collider.userData.parentTarget = target;
         
-        // Position collider to match target
+        // Position collider at target's position (not bounding box center)
         collider.position.copy(target.position);
+        
+        // For scaled targets, we might need a slight Y offset to center on the body
+        // Since targets are scaled ~5x, add a small offset upward from ground
+        collider.position.y += 1.0; // Adjust this value to center on cat body
+        
         collider.rotation.copy(target.rotation);
         
         // Add collider to scene and track it
         this.scene.add(collider);
         this.targetColliders.set(target, collider);
+        
+        console.log('Created target collider:', {
+            target: target.type,
+            size: size,
+            position: collider.position,
+            visible: collider.material.visible,
+            wireframe: collider.material.wireframe
+        });
         
         return collider;
     }
@@ -966,6 +985,54 @@ export class Weapon {
         this.removeTargetCollider(target);
         this.removeDebugHelper(target);
         target.userData.isTarget = false;
+    }
+
+    scanForNewTargets() {
+        // Automatically detect and register new targets
+        let foundTargets = 0;
+        let totalTargetsInScene = 0;
+        let alreadyRegistered = 0;
+        
+        console.log('Scanning for targets in scene...');
+        
+        this.scene.traverse((child) => {
+            // Count all objects with isTarget flag
+            if (child.userData && child.userData.isTarget) {
+                totalTargetsInScene++;
+                console.log(`Found target in scene: ${child.type}`, child.name || 'unnamed', 'Position:', child.position);
+                
+                // Check if already has collider
+                if (this.targetColliders.has(child)) {
+                    alreadyRegistered++;
+                    console.log('  - Already has collider');
+                } else {
+                    // Auto-register with appropriate collider size based on bounding box
+                    const box = new THREE.Box3().setFromObject(child);
+                    const size = new THREE.Vector3();
+                    box.getSize(size);
+                    
+                    console.log('  - Bounding box size:', size);
+                    
+                    // Use fixed collider size based on known target scaling (targets are scaled ~5x)
+                    const colliderSize = {
+                        width: 2,   // Fixed width for cat targets
+                        height: 2,  // Fixed height for cat targets
+                        depth: 4    // Fixed depth for cat targets
+                    };
+                    
+                    this.createTargetCollider(child, colliderSize);
+                    foundTargets++;
+                    console.log('  - Auto-detected and registered new target:', child.type, 'Size:', colliderSize);
+                }
+            }
+        });
+        
+        console.log(`Scan complete: Found ${totalTargetsInScene} targets in scene, ${alreadyRegistered} already registered, ${foundTargets} newly registered`);
+        console.log(`Total target colliders: ${this.targetColliders.size}`);
+        
+        if (this.debugMode && foundTargets > 0) {
+            console.log('Debug mode is active - new target colliders should be visible as red wireframes');
+        }
     }
 
     getGunMuzzlePosition() {
@@ -1004,6 +1071,13 @@ export class Weapon {
     update(deltaTime) {
         if (!this.isLoaded) return;
         
+        // Scan for new targets every few frames (performance optimization)
+        if (!this.scanCounter) this.scanCounter = 0;
+        this.scanCounter++;
+        if (this.scanCounter % 60 === 0) { // Scan every 60 frames (~1 second at 60fps)
+            this.scanForNewTargets();
+        }
+        
         // Update weapon rotation to follow camera (CS2-style)
         this.updateWeaponRotation();
         
@@ -1014,6 +1088,9 @@ export class Weapon {
         
         // Update bullet trails
         this.updateBullets(deltaTime);
+        
+        // Update target colliders
+        this.updateTargetColliders();
         
         // Handle shooting
         if (this.isShooting && this.shootTimer <= 0) {
@@ -1137,8 +1214,23 @@ export class Weapon {
     addDebugHelpersToScene() {
         // Add debug helpers for all targets in the scene
         this.scene.traverse((child) => {
-            if (child.isMesh && child.userData.isTarget) {
+            if (child.userData && child.userData.isTarget) {
                 this.addDebugHelper(child);
+                // Auto-register targets with colliders if not already registered
+                if (!this.targetColliders.has(child)) {
+                    const box = new THREE.Box3().setFromObject(child);
+                    const size = new THREE.Vector3();
+                    box.getSize(size);
+                    
+                    const colliderSize = {
+                        width: 3,   // Fixed width for cat targets
+                        height: 2,  // Fixed height for cat targets
+                        depth: 4    // Fixed depth for cat targets
+                    };
+                    
+                    this.createTargetCollider(child, colliderSize);
+                    console.log('Auto-registered target with collider:', child);
+                }
             }
         });
         
@@ -1181,5 +1273,21 @@ export class Weapon {
             }
             this.debugHelpers.delete(mesh);
         }
+    }
+
+    updateTargetColliders() {
+        // Update target collider positions to match their parent targets
+        this.targetColliders.forEach((collider, target) => {
+            if (target.parent) { // Target still exists in scene
+                // Position collider at target position with slight Y offset
+                collider.position.copy(target.position);
+                collider.position.y += 1.0; // Same offset as creation
+                collider.rotation.copy(target.rotation);
+                // Don't copy scale - colliders should stay fixed size
+            } else {
+                // Target was removed from scene, clean up its collider
+                this.removeTargetCollider(target);
+            }
+        });
     }
 }

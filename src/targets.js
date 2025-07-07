@@ -144,6 +144,14 @@ export class TargetManager {
         this.scene.add(target);
         this.targets.push(target);
         
+        // Notify weapon system about new target (if available)
+        if (window.weaponSystem && window.weaponSystem.scanForNewTargets) {
+            setTimeout(() => {
+                window.weaponSystem.scanForNewTargets();
+                console.log('Target created - notifying weapon system to scan');
+            }, 100); // Small delay to ensure target is fully added to scene
+        }
+        
         return target;
     }
     
