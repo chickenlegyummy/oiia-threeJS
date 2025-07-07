@@ -234,7 +234,7 @@ export class Player {
         if (!object) return false;
         
         // Check userData flags
-        if (object.userData && (object.userData.isPlayerBody || object.userData.isWeapon)) {
+        if (object.userData && (object.userData.isPlayerBody || object.userData.isWeapon || object.userData.isBullet)) {
             return true;
         }
         

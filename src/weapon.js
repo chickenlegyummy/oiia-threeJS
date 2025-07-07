@@ -14,6 +14,13 @@ export class Weapon {
         this.mixer = null;
         this.stateMachine = null;
         
+        // Bullet effects
+        this.activeBullets = [];
+        this.bulletSpeed = 100;
+        this.bulletLifetime = 3.0; // seconds
+        this.maxBulletTrails = 50;
+        this.ammoModel = null; // Loaded ammo.glb model
+        
         // Shooting properties
         this.isLoaded = false;
         this.isShooting = false;
@@ -47,6 +54,7 @@ export class Weapon {
         try {
             console.log('Initializing weapon system...');
             await this.loadModel();
+            await this.loadAmmoModel();
             this.setupMuzzleFlash();
             this.setupAudio();
             this.setupAnimations();
@@ -55,6 +63,7 @@ export class Weapon {
             this.isLoaded = true;
             
             console.log('Weapon loaded successfully, model:', this.model);
+            console.log('Ammo model loaded:', this.ammoModel);
             console.log('Weapon in camera children:', this.camera.children.includes(this.model));
         } catch (error) {
             console.error('Error loading weapon:', error);
@@ -85,6 +94,43 @@ export class Weapon {
                 }
             );
         });
+    }
+    
+    async loadAmmoModel() {
+        const loader = new GLTFLoader();
+        
+        return new Promise((resolve, reject) => {
+            loader.load(
+                'models/ammo.glb',
+                (gltf) => {
+                    this.ammoModel = gltf.scene.clone();
+                    console.log('Ammo GLB model loaded successfully');
+                    resolve();
+                },
+                (progress) => {
+                    console.log('Loading ammo:', Math.round(progress.loaded / progress.total * 100) + '%');
+                },
+                (error) => {
+                    console.warn('Could not load ammo GLB model, using fallback:', error);
+                    // Create fallback ammo model if loading fails
+                    this.createFallbackAmmoModel();
+                    resolve();
+                }
+            );
+        });
+    }
+    
+    createFallbackAmmoModel() {
+        // Create simple bullet shape as fallback
+        const bulletGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.2);
+        const bulletMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffff00,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        this.ammoModel = new THREE.Mesh(bulletGeometry, bulletMaterial);
+        console.log('Created fallback ammo model');
     }
     
     createFallbackModel() {
@@ -157,18 +203,58 @@ export class Weapon {
     }
     
     setupMuzzleFlash() {
-        // Create muzzle flash effect
-        const flashGeometry = new THREE.PlaneGeometry(0.5, 0.5);
+        // Create muzzle flash effect - enhanced version
+        const flashGeometry = new THREE.PlaneGeometry(0.3, 0.3);
         const flashMaterial = new THREE.MeshBasicMaterial({
             color: 0xffaa00,
             transparent: true,
             opacity: 0,
             blending: THREE.AdditiveBlending,
-            depthWrite: false
+            depthWrite: false,
+            side: THREE.DoubleSide
         });
         
         this.muzzleFlash = new THREE.Mesh(flashGeometry, flashMaterial);
         this.muzzleFlash.visible = false;
+        
+        // Create additional particle effects for more realistic muzzle flash
+        this.createMuzzleParticles();
+    }
+    
+    createMuzzleParticles() {
+        // Create small particles for enhanced muzzle flash effect
+        const particleCount = 20;
+        const particleGeometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        
+        for (let i = 0; i < particleCount; i++) {
+            const i3 = i * 3;
+            // Random positions around muzzle
+            positions[i3] = (Math.random() - 0.5) * 0.1;
+            positions[i3 + 1] = (Math.random() - 0.5) * 0.1;
+            positions[i3 + 2] = Math.random() * 0.2;
+            
+            // Orange/yellow colors
+            colors[i3] = 1.0;     // red
+            colors[i3 + 1] = 0.6 + Math.random() * 0.4; // green
+            colors[i3 + 2] = 0.0; // blue
+        }
+        
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const particleMaterial = new THREE.PointsMaterial({
+            size: 0.02,
+            transparent: true,
+            opacity: 0,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        
+        this.muzzleParticles = new THREE.Points(particleGeometry, particleMaterial);
+        this.muzzleParticles.visible = false;
     }
     
     setupAudio() {
@@ -219,6 +305,12 @@ export class Weapon {
             this.muzzleFlash.position.set(0.4, 0.2, -1.3);
             this.muzzleFlash.rotateY(Math.PI);
             this.model.add(this.muzzleFlash);
+        }
+        
+        // Add muzzle particles
+        if (this.muzzleParticles) {
+            this.muzzleParticles.position.set(0.4, 0.2, -1.3);
+            this.model.add(this.muzzleParticles);
         }
         
         // Attach weapon to player body if available, otherwise to camera
@@ -317,6 +409,23 @@ export class Weapon {
         // Show muzzle flash
         this.showMuzzleFlash();
         
+        // Create bullet trail visual effect
+        const muzzlePos = this.getGunMuzzlePosition();
+        const shootDirection = new THREE.Vector3();
+        this.camera.getWorldDirection(shootDirection);
+        
+        // Add slight random spread for realism
+        const spread = 0.02;
+        shootDirection.x += (Math.random() - 0.5) * spread;
+        shootDirection.y += (Math.random() - 0.5) * spread;
+        shootDirection.z += (Math.random() - 0.5) * spread;
+        shootDirection.normalize();
+        
+        this.createBulletTrail(muzzlePos, shootDirection);
+        
+        // Create shell casing ejection
+        this.createShellCasing();
+        
         // Play sound
         if (this.shootSound && this.shootSound.buffer) {
             if (this.shootSound.isPlaying) {
@@ -332,6 +441,9 @@ export class Weapon {
         if (this.onAmmoChange) {
             this.onAmmoChange(this.magAmmo, this.totalAmmo);
         }
+        
+        // Create shell casing ejection effect
+        this.createShellCasing();
         
         return true;
     }
@@ -373,7 +485,11 @@ export class Weapon {
     }
     
     isWeaponMesh(mesh) {
-        // Check if mesh is part of the weapon
+        // Check if mesh is part of the weapon or a bullet
+        if (mesh.userData && (mesh.userData.isWeapon || mesh.userData.isBullet)) {
+            return true;
+        }
+        
         let parent = mesh;
         while (parent) {
             if (parent === this.model) return true;
@@ -436,9 +552,25 @@ export class Weapon {
     showMuzzleFlash() {
         if (!this.muzzleFlash) return;
         
+        // Show main muzzle flash
         this.muzzleFlash.visible = true;
         this.muzzleFlash.material.opacity = 1.0;
         this.muzzleFlash.rotation.z = Math.random() * Math.PI * 2;
+        
+        // Show muzzle particles
+        if (this.muzzleParticles) {
+            this.muzzleParticles.visible = true;
+            this.muzzleParticles.material.opacity = 0.8;
+            
+            // Randomize particle positions slightly
+            const positions = this.muzzleParticles.geometry.attributes.position.array;
+            for (let i = 0; i < positions.length; i += 3) {
+                positions[i] += (Math.random() - 0.5) * 0.02;
+                positions[i + 1] += (Math.random() - 0.5) * 0.02;
+                positions[i + 2] += Math.random() * 0.05;
+            }
+            this.muzzleParticles.geometry.attributes.position.needsUpdate = true;
+        }
         
         this.flashTimer = this.flashDuration;
     }
@@ -466,6 +598,203 @@ export class Weapon {
         console.log(`Reloaded! Mag: ${this.magAmmo}, Total: ${this.totalAmmo}`);
     }
     
+    createBulletTrail(startPos, direction) {
+        let bullet;
+        
+        if (this.ammoModel) {
+            // Use the loaded ammo.glb model
+            bullet = this.ammoModel.clone();
+            
+            // Scale the ammo model appropriately for bullet size
+            bullet.scale.set(0.3, 0.3, 0.3);
+            
+            // Ensure materials are visible and mark as bullet
+            bullet.traverse((child) => {
+                if (child.isMesh) {
+                    if (child.material) {
+                        child.material = child.material.clone(); // Clone material to avoid affecting original
+                        child.material.transparent = true;
+                        child.material.opacity = 0.9;
+                    }
+                    child.userData.isBullet = true;
+                }
+            });
+        } else {
+            // Fallback to simple geometry if ammo model failed to load
+            const bulletGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.2);
+            const bulletMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+            bullet.userData.isBullet = true;
+        }
+        
+        // Position bullet at gun muzzle
+        bullet.position.copy(startPos);
+        
+        // Orient bullet in direction of travel
+        if (this.ammoModel) {
+            // For 3D models, we might need different orientation logic
+            const euler = new THREE.Euler();
+            euler.setFromQuaternion(this.camera.quaternion);
+            bullet.rotation.copy(euler);
+        } else {
+            // For simple cylinder, orient along direction
+            const axis = new THREE.Vector3(0, 1, 0);
+            bullet.quaternion.setFromUnitVectors(axis, direction);
+        }
+        
+        // Add to scene
+        this.scene.add(bullet);
+        
+        // Create bullet object with properties
+        const bulletObj = {
+            mesh: bullet,
+            velocity: direction.clone().multiplyScalar(this.bulletSpeed),
+            life: this.bulletLifetime,
+            startTime: performance.now()
+        };
+        
+        this.activeBullets.push(bulletObj);
+        
+        // Remove old bullets if too many
+        if (this.activeBullets.length > this.maxBulletTrails) {
+            const oldBullet = this.activeBullets.shift();
+            this.scene.remove(oldBullet.mesh);
+        }
+        
+        return bulletObj;
+    }
+    
+    createShellCasing() {
+        // Create small shell casing that ejects from the gun
+        const casingGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.06);
+        const casingMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xdaa520,
+            transparent: true,
+            opacity: 0.9
+        });
+        
+        const casing = new THREE.Mesh(casingGeometry, casingMaterial);
+        
+        // Position casing at gun ejection port (side of weapon)
+        const ejectionPos = this.getGunMuzzlePosition();
+        ejectionPos.add(new THREE.Vector3(-0.2, -0.1, -0.3)); // Offset to side/back
+        casing.position.copy(ejectionPos);
+        
+        // Add random ejection velocity
+        const ejectionVelocity = new THREE.Vector3(
+            -2 - Math.random() * 2, // Eject to the side
+            1 + Math.random() * 2,  // Upward
+            -1 - Math.random()      // Slightly backward
+        );
+        
+        this.scene.add(casing);
+        
+        // Animate shell casing
+        const startTime = performance.now();
+        const animateShell = () => {
+            const elapsed = (performance.now() - startTime) / 1000;
+            const gravity = -9.8;
+            
+            if (elapsed > 3) { // Remove after 3 seconds
+                this.scene.remove(casing);
+                return;
+            }
+            
+            // Update position with physics
+            casing.position.x += ejectionVelocity.x * 0.016;
+            casing.position.y += (ejectionVelocity.y + gravity * elapsed) * 0.016;
+            casing.position.z += ejectionVelocity.z * 0.016;
+            
+            // Add rotation
+            casing.rotation.x += 0.1;
+            casing.rotation.y += 0.05;
+            
+            // Fade out
+            casing.material.opacity = Math.max(0, 0.9 - elapsed / 3);
+            
+            requestAnimationFrame(animateShell);
+        };
+        
+        animateShell();
+    }
+
+    updateBullets(deltaTime) {
+        for (let i = this.activeBullets.length - 1; i >= 0; i--) {
+            const bullet = this.activeBullets[i];
+            
+            // Update position
+            bullet.mesh.position.add(bullet.velocity.clone().multiplyScalar(deltaTime));
+            
+            // Add bullet rotation for visual effect
+            if (this.ammoModel) {
+                bullet.mesh.rotation.z += deltaTime * 10; // Spinning bullet
+            } else {
+                bullet.mesh.rotation.y += deltaTime * 10;
+            }
+            
+            // Update lifetime
+            bullet.life -= deltaTime;
+            
+            // Fade out bullet over time
+            const lifeFactor = bullet.life / this.bulletLifetime;
+            
+            // Handle material opacity for both simple mesh and complex models
+            if (this.ammoModel) {
+                bullet.mesh.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.material.opacity = lifeFactor * 0.9;
+                    }
+                });
+            } else {
+                bullet.mesh.material.opacity = lifeFactor * 0.8;
+            }
+            
+            // Remove expired bullets
+            if (bullet.life <= 0) {
+                this.scene.remove(bullet.mesh);
+                this.activeBullets.splice(i, 1);
+            }
+        }
+    }
+    
+    getGunMuzzlePosition() {
+        if (!this.model) return new THREE.Vector3();
+        
+        // Calculate muzzle position based on weapon attachment
+        const muzzleOffset = new THREE.Vector3(0, 0, 1.5); // Forward from weapon
+        
+        if (this.playerBody) {
+            // If attached to player body, calculate world position
+            const worldPos = new THREE.Vector3();
+            const worldQuaternion = new THREE.Quaternion();
+            
+            // Get weapon's world position and rotation
+            this.model.getWorldPosition(worldPos);
+            this.model.getWorldQuaternion(worldQuaternion);
+            
+            // Apply muzzle offset in weapon's local space
+            muzzleOffset.applyQuaternion(worldQuaternion);
+            worldPos.add(muzzleOffset);
+            
+            return worldPos;
+        } else {
+            // If attached to camera, use camera-relative position
+            const cameraDirection = new THREE.Vector3();
+            this.camera.getWorldDirection(cameraDirection);
+            
+            const muzzlePos = this.camera.position.clone();
+            muzzlePos.add(cameraDirection.multiplyScalar(1.5));
+            muzzlePos.add(new THREE.Vector3(0.2, -0.1, 0)); // Slight offset for realism
+            
+            return muzzlePos;
+        }
+    }
+
     update(deltaTime) {
         if (!this.isLoaded) return;
         
@@ -473,6 +802,9 @@ export class Weapon {
         if (this.mixer) {
             this.mixer.update(deltaTime);
         }
+        
+        // Update bullet trails
+        this.updateBullets(deltaTime);
         
         // Handle shooting
         if (this.isShooting && this.shootTimer <= 0) {
@@ -491,10 +823,21 @@ export class Weapon {
             const alpha = this.flashTimer / this.flashDuration;
             this.muzzleFlash.material.opacity = alpha;
             
+            // Update muzzle particles opacity
+            if (this.muzzleParticles) {
+                this.muzzleParticles.material.opacity = alpha * 0.8;
+            }
+            
             if (this.flashTimer <= 0) {
                 this.muzzleFlash.visible = false;
+                if (this.muzzleParticles) {
+                    this.muzzleParticles.visible = false;
+                }
             }
         }
+        
+        // Update bullet trails
+        this.updateBullets(deltaTime);
     }
     
     // Getters for HUD
