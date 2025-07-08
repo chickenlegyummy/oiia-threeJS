@@ -63,7 +63,7 @@ renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
 
 // Enhanced lighting setup - bright ambient for sunny sky
-const ambientLight = new THREE.AmbientLight(0xB8D4F0, 0.4);
+const ambientLight = new THREE.AmbientLight(0xB8D4F0, 1);
 scene.add(ambientLight);
 
 // Key directional light (sun)

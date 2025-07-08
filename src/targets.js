@@ -127,8 +127,9 @@ export class TargetManager {
                 child.castShadow = true;
                 child.receiveShadow = true;
                 
-                // Store original material properties
+                // Clone material to ensure each target has its own material instance
                 if (child.material) {
+                    child.material = child.material.clone();
                     child.userData.originalColor = child.material.color.clone();
                     child.userData.originalEmissive = child.material.emissive ? child.material.emissive.clone() : new THREE.Color(0x000000);
                 }
