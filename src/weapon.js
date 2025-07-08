@@ -796,26 +796,8 @@ export class Weapon {
     }
     
     checkBulletColliderCollision(bullet, prevPosition) {
-        const bulletCollider = this.bulletColliders.get(bullet);
+        const bulletCollider = this.bulletColliders.get(bullet.mesh);
         if (!bulletCollider) return false;
-        
-        // Get all target colliders in the scene
-        const targetColliders = [];
-        this.targetColliders.forEach((collider, target) => {
-            targetColliders.push(collider);
-        });
-        
-        // Also check against regular scene objects for walls/environment
-        const environmentTargets = [];
-        this.scene.traverse((child) => {
-            if (child.isMesh && 
-                !this.isWeaponMesh(child) && 
-                !child.userData.isBullet && 
-                !child.userData.isBulletCollider &&
-                !child.userData.isTargetCollider) {
-                environmentTargets.push(child);
-            }
-        });
         
         // Create raycaster from previous position to current position
         const direction = new THREE.Vector3().subVectors(bullet.mesh.position, prevPosition);
@@ -826,21 +808,35 @@ export class Weapon {
         direction.normalize();
         const raycaster = new THREE.Raycaster(prevPosition, direction, 0, distance);
         
-        // Check collisions with target colliders first
+        // PRIORITY 1: Check collisions with target colliders ONLY (these are our hit triggers)
+        const targetColliders = [];
+        this.targetColliders.forEach((collider, target) => {
+            // Only include visible and properly positioned colliders
+            if (collider.visible !== false) {
+                targetColliders.push(collider);
+            }
+        });
+        
         const targetIntersects = raycaster.intersectObjects(targetColliders, false);
         if (targetIntersects.length > 0) {
             const hit = targetIntersects[0];
             const hitCollider = hit.object;
             const parentTarget = hitCollider.userData.parentTarget;
             
+            console.log('🎯 HIT TARGET COLLIDER!', {
+                collider: hitCollider,
+                target: parentTarget,
+                hitPoint: hit.point
+            });
+            
             // Move bullet to hit position
             bullet.mesh.position.copy(hit.point);
             bulletCollider.position.copy(hit.point);
             
-            // Create hit effect
+            // Create hit effect at collision point
             this.createHitEffect(hit.point, hit.face.normal);
             
-            // Handle target hit
+            // Trigger target hit using the collider as the trigger
             if (parentTarget && parentTarget.userData.isTarget) {
                 this.onTargetHit(parentTarget, hit);
             }
@@ -857,10 +853,24 @@ export class Weapon {
             return true;
         }
         
-        // Check collisions with environment
+        // PRIORITY 2: Only check environment if no target colliders were hit
+        const environmentTargets = [];
+        this.scene.traverse((child) => {
+            if (child.isMesh && 
+                !this.isWeaponMesh(child) && 
+                !child.userData.isBullet && 
+                !child.userData.isBulletCollider &&
+                !child.userData.isTargetCollider &&
+                !child.userData.isTarget) { // Exclude actual target meshes since we use colliders
+                environmentTargets.push(child);
+            }
+        });
+        
         const environmentIntersects = raycaster.intersectObjects(environmentTargets, true);
         if (environmentIntersects.length > 0) {
             const hit = environmentIntersects[0];
+            
+            console.log('🏗️ HIT ENVIRONMENT:', hit.object);
             
             // Move bullet to hit position
             bullet.mesh.position.copy(hit.point);
@@ -945,12 +955,15 @@ export class Weapon {
         this.scene.add(collider);
         this.targetColliders.set(target, collider);
         
-        console.log('Created target collider:', {
-            target: target.type,
+        console.log('✅ Created target collider:', {
+            target: target.type || 'Unknown',
+            targetName: target.name || 'unnamed',
             size: size,
             position: collider.position,
             visible: collider.material.visible,
-            wireframe: collider.material.wireframe
+            wireframe: collider.material.wireframe,
+            isTargetCollider: collider.userData.isTargetCollider,
+            parentTarget: collider.userData.parentTarget === target
         });
         
         return collider;
