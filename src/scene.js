@@ -37,12 +37,9 @@ scene.background = skyboxTexture;
 // Optional: Add subtle atmospheric fog for depth
 scene.fog = new THREE.Fog(0xffffff, 100, 300);
 
-// Remove fog temporarily while we load the skybox
-// scene.fog = new THREE.Fog(0x87CEEB, 50, 200);
-
 // Create camera
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 1.6, 5); // Eye level height
+// Camera position will be managed by Player class
 
 // Add audio listener to camera
 const audioListener = new THREE.AudioListener();
@@ -124,15 +121,7 @@ floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-
-
-
-
-
-
-
-
-// Initialize player
+// Initialize player (must be done before weapon system)
 const player = new Player(camera, scene);
 
 // Initialize weapon system
@@ -143,6 +132,9 @@ let targetManager = null;
 async function initializeSystems() {
     try {
         console.log('Starting initialization of FPS systems...');
+        
+        // Wait a frame to ensure player body is created
+        await new Promise(resolve => requestAnimationFrame(resolve));
         
         // Initialize weapon system with player body
         weapon = new Weapon(camera, scene, audioListener, player.getPlayerBody(), player);
@@ -232,7 +224,7 @@ function updateScoreDisplay() {
 
 function updateTargetsDisplay() {
     const targetsElement = document.getElementById('targets');
-    const targetCount = targetManager.getTargetCount();
+    const targetCount = targetManager ? targetManager.getTargetCount() : 0;
     if (!targetsElement) {
         // Create targets display if it doesn't exist
         const hud = document.getElementById('hud');
@@ -364,7 +356,7 @@ function animate() {
     // Update HUD with player info
     if (player.isLocked) {
         const speed = Math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z);
-        const pos = player.camera.position;
+        const pos = player.getCameraWorldPosition();
         document.getElementById('speed').textContent = `Speed: ${speed.toFixed(1)}`;
         document.getElementById('position').textContent = `Position: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}`;
         document.getElementById('hud').classList.add('active');
@@ -376,8 +368,6 @@ function animate() {
     } else {
         document.getElementById('hud').classList.remove('active');
     }
-    
-    // ...existing animation code...
     
     // Dynamic lighting
     directionalLight.intensity = 0.8 + Math.sin(time * 0.5) * 0.2;

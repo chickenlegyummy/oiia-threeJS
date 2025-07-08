@@ -7,7 +7,7 @@ export class Weapon {
         this.scene = scene;
         this.audioListener = audioListener;
         this.playerBody = playerBody; // Player body to attach weapon to
-        this.player = player; // Reference to player for accessing euler rotation
+        this.player = player; // Reference to player for accessing rotation
         
         // Weapon properties
         this.model = null;
@@ -15,9 +15,20 @@ export class Weapon {
         this.mixer = null;
         this.stateMachine = null;
         
-        // Camera rotation tracking for weapon orientation
-        this.lastCameraRotation = new THREE.Euler();
-        this.weaponRotationOffset = new THREE.Euler(); // Base rotation offset
+        // Quaternion-based rotation tracking
+        this.weaponQuaternion = new THREE.Quaternion();
+        this.targetQuaternion = new THREE.Quaternion();
+        this.lastCameraQuaternion = new THREE.Quaternion();
+        
+        // Base weapon offsets
+        this.weaponPositionOffset = new THREE.Vector3(0.4, 0.2, -1.3);
+        this.weaponRotationOffset = new THREE.Euler(
+            THREE.MathUtils.degToRad(-10), 
+            THREE.MathUtils.degToRad(90), 
+            THREE.MathUtils.degToRad(5)
+        );
+        this.weaponBaseQuaternion = new THREE.Quaternion();
+        this.weaponBaseQuaternion.setFromEuler(this.weaponRotationOffset);
         
         // Bullet effects
         this.activeBullets = [];
@@ -80,10 +91,11 @@ export class Weapon {
             window.weaponDebug = () => this.toggleDebugMode();
             window.registerTarget = (target, size) => this.registerTarget(target, size);
             window.scanTargets = () => this.scanForNewTargets();
+            window.weaponSystem = this;
             
             console.log('Weapon loaded successfully, model:', this.model);
             console.log('Ammo model loaded:', this.ammoModel);
-            console.log('Weapon in camera children:', this.camera.children.includes(this.model));
+            console.log('Weapon attached to:', this.model.parent);
             console.log('Debug command available: weaponDebug()');
             console.log('Target registration: registerTarget(mesh, {width, height, depth})');
             console.log('Manual target scan: scanTargets()');
@@ -96,7 +108,6 @@ export class Weapon {
         const loader = new GLTFLoader();
         
         return new Promise((resolve, reject) => {
-            // First try the exact filename that exists
             loader.load(
                 'models/ak47.glb',
                 (gltf) => {
@@ -134,7 +145,6 @@ export class Weapon {
                 },
                 (error) => {
                     console.warn('Could not load ammo GLB model, using fallback:', error);
-                    // Create fallback ammo model if loading fails
                     this.createFallbackAmmoModel();
                     resolve();
                 }
@@ -225,7 +235,7 @@ export class Weapon {
     }
     
     setupMuzzleFlash() {
-        // Create muzzle flash effect - enhanced version
+        // Create muzzle flash effect
         const flashGeometry = new THREE.PlaneGeometry(0.3, 0.3);
         const flashMaterial = new THREE.MeshBasicMaterial({
             color: 0xffaa00,
@@ -337,28 +347,18 @@ export class Weapon {
         
         // Attach weapon to player body if available, otherwise to camera
         if (this.playerBody) {
-            // Position weapon relative to player body (right hand position)
-            this.model.position.set(0.4, 0.2, -1.3); // Right side, chest/arm level, slightly forward
+            // Set weapon position
+            this.model.position.copy(this.weaponPositionOffset);
             
-            // Store the base rotation offset for CS2-style weapon movement
-            this.weaponRotationOffset.set(
-                THREE.MathUtils.degToRad(-10), // Slight downward angle
-                THREE.MathUtils.degToRad(90),  // Angled outward
-                THREE.MathUtils.degToRad(5)    // Slight roll
-            );
-            this.model.setRotationFromEuler(this.weaponRotationOffset);
+            // Set initial rotation from base quaternion
+            this.model.quaternion.copy(this.weaponBaseQuaternion);
             
             this.playerBody.add(this.model);
             console.log('Weapon attached to player body');
         } else {
             // Fallback to camera attachment
             this.model.position.set(1, 0, 10);
-            this.weaponRotationOffset.set(
-                THREE.MathUtils.degToRad(5), 
-                THREE.MathUtils.degToRad(185), 
-                0
-            );
-            this.model.setRotationFromEuler(this.weaponRotationOffset);
+            this.model.quaternion.copy(this.weaponBaseQuaternion);
             this.camera.add(this.model);
             console.log('Weapon attached to camera (fallback)');
         }
@@ -368,7 +368,6 @@ export class Weapon {
         
         console.log('Weapon attached at position:', this.model.position);
         console.log('Weapon scale:', this.model.scale);
-        console.log('Weapon base rotation:', this.weaponRotationOffset);
         console.log('Weapon visible:', this.model.visible);
     }
     
@@ -390,7 +389,7 @@ export class Weapon {
     setupInput() {
         // Mouse shooting
         document.addEventListener('mousedown', (event) => {
-            if (event.button === 0) { // Left mouse button
+            if (event.button === 0 && this.player && this.player.isLocked) { // Left mouse button
                 this.startShooting();
             }
         });
@@ -403,7 +402,7 @@ export class Weapon {
         
         // Reload key (R)
         document.addEventListener('keydown', (event) => {
-            if (event.code === 'KeyR') {
+            if (event.code === 'KeyR' && this.player && this.player.isLocked) {
                 this.reload();
             }
         });
@@ -452,7 +451,11 @@ export class Weapon {
             this.shootSound.play();
         }
         
-        // No immediate raycast - bullets will handle collision detection
+        // Show muzzle flash
+        this.showMuzzleFlash();
+        
+        // Create shell casing
+        this.createShellCasing();
         
         // Update HUD
         if (this.onAmmoChange) {
@@ -460,78 +463,6 @@ export class Weapon {
         }
         
         return true;
-    }
-    
-    performRaycast() {
-        // Set ray from camera center
-        this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-        
-        // Get all objects in scene (excluding weapon)
-        const targets = [];
-        this.scene.traverse((child) => {
-            if (child.isMesh && !this.isWeaponMesh(child)) {
-                targets.push(child);
-            }
-        });
-        
-        const intersects = this.raycaster.intersectObjects(targets, true);
-        
-        if (intersects.length > 0) {
-            const hit = intersects[0];
-            
-            // Create hit effect
-            this.createHitEffect(hit.point, hit.face.normal);
-            
-            // Check if we hit a target (cat)
-            let targetMesh = hit.object;
-            while (targetMesh.parent && !targetMesh.userData.isTarget) {
-                targetMesh = targetMesh.parent;
-            }
-            
-            if (targetMesh.userData.isTarget) {
-                this.onTargetHit(targetMesh, hit);
-            }
-            
-            return hit;
-        }
-        
-        return null;
-    }
-    
-    isWeaponMesh(mesh) {
-        // Check if mesh is part of the weapon or a bullet
-        if (mesh.userData && (mesh.userData.isWeapon || mesh.userData.isBullet)) {
-            return true;
-        }
-        
-        let parent = mesh;
-        while (parent) {
-            if (parent === this.model) return true;
-            parent = parent.parent;
-        }
-        return false;
-    }
-    
-    createHitEffect(position, normal) {
-        // Create bullet impact effect - but only show it in debug mode or for environment hits
-        // For target hits, we'll rely on the target's own hit effect system
-        console.log('💥 Impact effect at:', position);
-        
-        // Only show impact sparks for environment hits, not target hits
-        // Target hits are handled by the target's own showHitEffect method
-    }
-    
-    onTargetHit(target, hitInfo) {
-        console.log('🎯 Target hit via collider!', target);
-        
-        // Only apply hit effect to the specific target that was hit
-        // The target's own hit system will handle the red flash effect
-        
-        // Trigger target behavior - this will call the target's onHit method
-        // which handles the red flash effect properly
-        if (target.userData.onHit) {
-            target.userData.onHit(hitInfo);
-        }
     }
     
     showMuzzleFlash() {
@@ -620,12 +551,12 @@ export class Weapon {
         // Position bullet at gun muzzle
         bullet.position.copy(startPos);
         
-        // Orient bullet in direction of travel
+        // Orient bullet in direction of travel using quaternion
         if (this.ammoModel) {
-            // For 3D models, we might need different orientation logic
-            const euler = new THREE.Euler();
-            euler.setFromQuaternion(this.camera.quaternion);
-            bullet.rotation.copy(euler);
+            // For 3D models, align with camera rotation
+            const cameraQuaternion = new THREE.Quaternion();
+            this.camera.getWorldQuaternion(cameraQuaternion);
+            bullet.quaternion.copy(cameraQuaternion);
         } else {
             // For simple cylinder, orient along direction
             const axis = new THREE.Vector3(0, 1, 0);
@@ -643,7 +574,7 @@ export class Weapon {
             this.addDebugHelper(bullet);
         }
         
-        // Create bullet object with properties - bullets now act as hitboxes
+        // Create bullet object with properties
         const bulletObj = {
             mesh: bullet,
             velocity: direction.clone().multiplyScalar(this.bulletSpeed),
@@ -736,8 +667,8 @@ export class Weapon {
             // Perform collision detection for this bullet
             this.checkBulletColliderCollision(bullet, prevPosition);
             
-            // Add bullet rotation for visual effect - spin around Y-axis
-            bullet.mesh.rotation.y += deltaTime * 15; // Consistent Y-axis spinning for all bullet types
+            // Add bullet rotation for visual effect
+            bullet.mesh.rotation.y += deltaTime * 15;
             
             // Update lifetime
             bullet.life -= deltaTime;
@@ -779,10 +710,9 @@ export class Weapon {
         direction.normalize();
         const raycaster = new THREE.Raycaster(prevPosition, direction, 0, distance);
         
-        // PRIORITY 1: Check collisions with target colliders ONLY (these are our hit triggers)
+        // PRIORITY 1: Check collisions with target colliders ONLY
         const targetColliders = [];
         this.targetColliders.forEach((collider, target) => {
-            // Only include visible and properly positioned colliders
             if (collider.visible !== false) {
                 targetColliders.push(collider);
             }
@@ -807,7 +737,7 @@ export class Weapon {
             // Create hit effect at collision point
             this.createHitEffect(hit.point, hit.face.normal);
             
-            // Trigger target hit using the collider as the trigger
+            // Trigger target hit
             if (parentTarget && parentTarget.userData.isTarget) {
                 this.onTargetHit(parentTarget, hit);
             }
@@ -824,7 +754,7 @@ export class Weapon {
             return true;
         }
         
-        // PRIORITY 2: Only check environment if no target colliders were hit
+        // PRIORITY 2: Check environment
         const environmentTargets = [];
         this.scene.traverse((child) => {
             if (child.isMesh && 
@@ -832,7 +762,7 @@ export class Weapon {
                 !child.userData.isBullet && 
                 !child.userData.isBulletCollider &&
                 !child.userData.isTargetCollider &&
-                !child.userData.isTarget) { // Exclude actual target meshes since we use colliders
+                !child.userData.isTarget) {
                 environmentTargets.push(child);
             }
         });
@@ -865,14 +795,95 @@ export class Weapon {
         return false;
     }
     
+    isWeaponMesh(mesh) {
+        // Check if mesh is part of the weapon or a bullet
+        if (mesh.userData && (mesh.userData.isWeapon || mesh.userData.isBullet)) {
+            return true;
+        }
+        
+        let parent = mesh;
+        while (parent) {
+            if (parent === this.model) return true;
+            parent = parent.parent;
+        }
+        return false;
+    }
+    
+    createHitEffect(position, normal) {
+        // Create bullet impact effect
+        console.log('💥 Impact effect at:', position);
+        
+        // Create impact particles
+        const particleCount = 15;
+        const particles = [];
+        
+        for (let i = 0; i < particleCount; i++) {
+            const particle = new THREE.Mesh(
+                new THREE.SphereGeometry(0.01, 4, 4),
+                new THREE.MeshBasicMaterial({
+                    color: i < 5 ? 0xffaa00 : 0x666666, // Mix of sparks and debris
+                    transparent: true,
+                    opacity: 0.8
+                })
+            );
+            
+            particle.position.copy(position);
+            
+            // Add some offset based on normal
+            const offset = normal.clone().multiplyScalar(0.05);
+            particle.position.add(offset);
+            
+            // Random velocity influenced by normal
+            particle.velocity = new THREE.Vector3(
+                (Math.random() - 0.5) * 2 + normal.x * 2,
+                Math.random() * 2 + normal.y * 2,
+                (Math.random() - 0.5) * 2 + normal.z * 2
+            );
+            
+            this.scene.add(particle);
+            particles.push(particle);
+        }
+        
+        // Animate particles
+        const startTime = Date.now();
+        const animateParticles = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = elapsed / 500; // 0.5 second duration
+            
+            if (progress >= 1) {
+                particles.forEach(particle => this.scene.remove(particle));
+                return;
+            }
+            
+            particles.forEach(particle => {
+                particle.position.add(particle.velocity.clone().multiplyScalar(0.016));
+                particle.velocity.y -= 0.2; // Gravity
+                particle.material.opacity = 0.8 * (1 - progress);
+                particle.scale.setScalar(1 - progress * 0.5);
+            });
+            
+            requestAnimationFrame(animateParticles);
+        };
+        animateParticles();
+    }
+    
+    onTargetHit(target, hitInfo) {
+        console.log('🎯 Target hit via collider!', target);
+        
+        // Trigger target behavior
+        if (target.userData.onHit) {
+            target.userData.onHit(hitInfo);
+        }
+    }
+    
     createBulletCollider(bullet) {
         // Create a rectangular collider for the bullet
-        const colliderGeometry = new THREE.BoxGeometry(5, 5, 5); // Small rectangular hitbox
+        const colliderGeometry = new THREE.BoxGeometry(5, 5, 5);
         const colliderMaterial = new THREE.MeshBasicMaterial({
             color: 0x00ff00,
             transparent: true,
             opacity: 0.3,
-            visible: this.debugMode // Only visible in debug mode
+            visible: this.debugMode
         });
         
         const collider = new THREE.Mesh(colliderGeometry, colliderMaterial);
@@ -905,21 +916,17 @@ export class Weapon {
             color: 0xff0000,
             transparent: true,
             opacity: 0.3,
-            visible: this.debugMode, // Only visible in debug mode
-            wireframe: this.debugMode // Show as wireframe in debug mode
+            visible: this.debugMode,
+            wireframe: this.debugMode
         });
         
         const collider = new THREE.Mesh(colliderGeometry, colliderMaterial);
         collider.userData.isTargetCollider = true;
         collider.userData.parentTarget = target;
         
-        // Position collider at target's position (not bounding box center)
+        // Position collider at target's position
         collider.position.copy(target.position);
-        
-        // For scaled targets, we might need a slight Y offset to center on the body
-        // Since targets are scaled ~5x, add a small offset upward from ground
-        collider.position.y += 1.0; // Adjust this value to center on cat body
-        
+        collider.position.y += 1.0; // Offset for cat body
         collider.rotation.copy(target.rotation);
         
         // Add collider to scene and track it
@@ -930,11 +937,7 @@ export class Weapon {
             target: target.type || 'Unknown',
             targetName: target.name || 'unnamed',
             size: size,
-            position: collider.position,
-            visible: collider.material.visible,
-            wireframe: collider.material.wireframe,
-            isTargetCollider: collider.userData.isTargetCollider,
-            parentTarget: collider.userData.parentTarget === target
+            position: collider.position
         });
         
         return collider;
@@ -948,7 +951,6 @@ export class Weapon {
         }
     }
 
-    // Public method to register a target with a collider
     registerTarget(target, colliderSize = { width: 1, height: 1, depth: 1 }) {
         // Mark the target
         target.userData.isTarget = true;
@@ -964,7 +966,6 @@ export class Weapon {
         console.log('Target registered with collider:', target);
     }
     
-    // Public method to unregister a target
     unregisterTarget(target) {
         this.removeTargetCollider(target);
         this.removeDebugHelper(target);
@@ -972,7 +973,6 @@ export class Weapon {
     }
 
     scanForNewTargets() {
-        // Automatically detect and register new targets
         let foundTargets = 0;
         let totalTargetsInScene = 0;
         let alreadyRegistered = 0;
@@ -980,28 +980,19 @@ export class Weapon {
         console.log('Scanning for targets in scene...');
         
         this.scene.traverse((child) => {
-            // Count all objects with isTarget flag
             if (child.userData && child.userData.isTarget) {
                 totalTargetsInScene++;
                 console.log(`Found target in scene: ${child.type}`, child.name || 'unnamed', 'Position:', child.position);
                 
-                // Check if already has collider
                 if (this.targetColliders.has(child)) {
                     alreadyRegistered++;
                     console.log('  - Already has collider');
                 } else {
-                    // Auto-register with appropriate collider size based on bounding box
-                    const box = new THREE.Box3().setFromObject(child);
-                    const size = new THREE.Vector3();
-                    box.getSize(size);
-                    
-                    console.log('  - Bounding box size:', size);
-                    
-                    // Use fixed collider size based on known target scaling (targets are scaled ~5x)
+                    // Auto-register with appropriate collider size
                     const colliderSize = {
-                        width: 2,   // Fixed width for cat targets
-                        height: 2,  // Fixed height for cat targets
-                        depth: 4    // Fixed depth for cat targets
+                        width: 2,
+                        height: 2,
+                        depth: 4
                     };
                     
                     this.createTargetCollider(child, colliderSize);
@@ -1022,15 +1013,13 @@ export class Weapon {
     getGunMuzzlePosition() {
         if (!this.model) return new THREE.Vector3();
         
-        // Calculate muzzle position based on weapon attachment
-        const muzzleOffset = new THREE.Vector3(1, -0.3, 0.8); // Forward from weapon
+        const muzzleOffset = new THREE.Vector3(1, -0.3, 0.8);
         
         if (this.playerBody) {
-            // If attached to player body, calculate world position
+            // Get weapon's world position and rotation
             const worldPos = new THREE.Vector3();
             const worldQuaternion = new THREE.Quaternion();
             
-            // Get weapon's world position and rotation
             this.model.getWorldPosition(worldPos);
             this.model.getWorldQuaternion(worldQuaternion);
             
@@ -1044,9 +1033,10 @@ export class Weapon {
             const cameraDirection = new THREE.Vector3();
             this.camera.getWorldDirection(cameraDirection);
             
-            const muzzlePos = this.camera.position.clone();
+            const muzzlePos = new THREE.Vector3();
+            this.camera.getWorldPosition(muzzlePos);
             muzzlePos.add(cameraDirection.multiplyScalar(1.5));
-            muzzlePos.add(new THREE.Vector3(0.2, -0.1, 0)); // Slight offset for realism
+            muzzlePos.add(new THREE.Vector3(0.2, -0.1, 0));
             
             return muzzlePos;
         }
@@ -1055,14 +1045,14 @@ export class Weapon {
     update(deltaTime) {
         if (!this.isLoaded) return;
         
-        // Scan for new targets every few frames (performance optimization)
+        // Scan for new targets periodically
         if (!this.scanCounter) this.scanCounter = 0;
         this.scanCounter++;
-        if (this.scanCounter % 60 === 0) { // Scan every 60 frames (~1 second at 60fps)
+        if (this.scanCounter % 60 === 0) {
             this.scanForNewTargets();
         }
         
-        // Update weapon rotation to follow camera (CS2-style)
+        // Update weapon rotation to follow camera
         this.updateWeaponRotation();
         
         // Update animations
@@ -1076,6 +1066,22 @@ export class Weapon {
         // Update target colliders
         this.updateTargetColliders();
         
+        // Update muzzle flash
+        if (this.flashTimer > 0) {
+            this.flashTimer -= deltaTime;
+            const flashProgress = this.flashTimer / this.flashDuration;
+            
+            if (this.muzzleFlash) {
+                this.muzzleFlash.material.opacity = flashProgress;
+                this.muzzleFlash.visible = flashProgress > 0;
+            }
+            
+            if (this.muzzleParticles) {
+                this.muzzleParticles.material.opacity = flashProgress * 0.8;
+                this.muzzleParticles.visible = flashProgress > 0;
+            }
+        }
+        
         // Handle shooting
         if (this.isShooting && this.shootTimer <= 0) {
             if (this.shoot()) {
@@ -1088,7 +1094,61 @@ export class Weapon {
         }
     }
     
-    // Getters for HUD
+    updateWeaponRotation() {
+        if (!this.model || !this.player) return;
+        
+        // Get camera's world quaternion
+        const cameraWorldQuaternion = new THREE.Quaternion();
+        this.camera.getWorldQuaternion(cameraWorldQuaternion);
+        
+        // Calculate quaternion difference for smooth interpolation
+        const quaternionDelta = new THREE.Quaternion();
+        quaternionDelta.copy(this.lastCameraQuaternion).invert();
+        quaternionDelta.multiply(cameraWorldQuaternion);
+        
+        // Store current camera quaternion for next frame
+        this.lastCameraQuaternion.copy(cameraWorldQuaternion);
+        
+        // Get player state for influence adjustments
+        let pitchInfluence = 0.4;
+        let yawInfluence = 0.2;
+        let sway = 0.1;
+        
+        if (this.player.isRunning) {
+            pitchInfluence *= 1.2;
+            yawInfluence *= 1.3;
+            sway *= 1.5;
+        } else if (this.player.isCrouching) {
+            pitchInfluence *= 0.7;
+            yawInfluence *= 0.6;
+            sway *= 0.5;
+        }
+        
+        // Create target quaternion that combines base offset with camera influence
+        const targetQuaternion = new THREE.Quaternion();
+        
+        // Start with base weapon quaternion
+        targetQuaternion.copy(this.weaponBaseQuaternion);
+        
+        // Apply camera influence
+        const cameraInfluence = new THREE.Quaternion();
+        cameraInfluence.slerp(cameraWorldQuaternion, pitchInfluence);
+        
+        // Combine base and camera influence
+        targetQuaternion.multiply(cameraInfluence);
+        
+        // Apply smooth interpolation
+        let lerpFactor = 0.12;
+        if (this.player.isRunning) {
+            lerpFactor *= 1.4;
+        } else if (this.player.isCrouching) {
+            lerpFactor *= 0.7;
+        }
+        
+        // Smoothly interpolate weapon rotation
+        this.model.quaternion.slerp(targetQuaternion, lerpFactor);
+    }
+
     getAmmoCount() {
         return {
             mag: this.magAmmo,
@@ -1097,71 +1157,10 @@ export class Weapon {
     }
     
     addAmmo(amount) {
-        this.totalAmmo = Math.min(this.totalAmmo + amount, 300); // Max 300 total ammo
+        this.totalAmmo = Math.min(this.totalAmmo + amount, 300);
         if (this.onAmmoChange) {
             this.onAmmoChange(this.magAmmo, this.totalAmmo);
         }
-    }
-
-    updateWeaponRotation() {
-        if (!this.model || !this.player) return;
-        
-        // Get player's euler rotation for accurate camera tracking
-        const cameraEuler = this.player.euler;
-        
-        if (!cameraEuler) return;
-        
-        // Calculate weapon rotation based on camera rotation
-        // In CS2/modern FPS style, the weapon should:
-        // 1. Follow camera pitch (up/down look) with some dampening
-        // 2. Follow camera yaw (left/right turn) slightly for natural sway
-        // 3. Add subtle roll based on movement for realism
-        // 4. Respond to player movement state (running, crouching)
-        // 5. Maintain base rotation offset
-        
-        let pitchInfluence = 0.4; // How much camera pitch affects weapon (0-1)
-        let yawInfluence = 0.2;   // How much camera yaw affects weapon beyond body rotation (0-1)
-        let rollInfluence = 0.1;  // Subtle roll effect based on yaw movement
-        
-        // Adjust influences based on player state
-        if (this.player.isRunning) {
-            pitchInfluence *= 1.2; // More weapon movement when running
-            yawInfluence *= 1.3;
-            rollInfluence *= 1.5;
-        } else if (this.player.isCrouching) {
-            pitchInfluence *= 0.7; // More stable when crouching
-            yawInfluence *= 0.6;
-            rollInfluence *= 0.5;
-        }
-        
-        // Calculate yaw movement speed for dynamic roll effect
-        const yawDelta = cameraEuler.y - this.lastCameraRotation.y;
-        const rollFromYaw = yawDelta * rollInfluence * 50; // Scale for visible effect
-        
-        // Store current rotation for next frame
-        this.lastCameraRotation.copy(cameraEuler);
-        
-        // Calculate the weapon's target rotation
-        const targetRotation = new THREE.Euler(
-            this.weaponRotationOffset.x + (cameraEuler.x * pitchInfluence), // Pitch follows camera
-            this.weaponRotationOffset.y + (cameraEuler.y * yawInfluence),   // Slight yaw sway
-            this.weaponRotationOffset.z + rollFromYaw, // Dynamic roll from movement
-            'YXZ'
-        );
-        
-        // Apply smooth interpolation for natural movement
-        let lerpFactor = 0.12; // Base smoothing factor (0-1, higher = faster response)
-        
-        // Adjust lerp factor based on player state
-        if (this.player.isRunning) {
-            lerpFactor *= 1.4; // Faster response when running
-        } else if (this.player.isCrouching) {
-            lerpFactor *= 0.7; // Slower, more stable when crouching
-        }
-        
-        this.model.rotation.x = THREE.MathUtils.lerp(this.model.rotation.x, targetRotation.x, lerpFactor);
-        this.model.rotation.y = THREE.MathUtils.lerp(this.model.rotation.y, targetRotation.y, lerpFactor);
-        this.model.rotation.z = THREE.MathUtils.lerp(this.model.rotation.z, targetRotation.z, lerpFactor * 0.5); // Slower roll interpolation
     }
 
     toggleDebugMode() {
@@ -1202,14 +1201,10 @@ export class Weapon {
                 this.addDebugHelper(child);
                 // Auto-register targets with colliders if not already registered
                 if (!this.targetColliders.has(child)) {
-                    const box = new THREE.Box3().setFromObject(child);
-                    const size = new THREE.Vector3();
-                    box.getSize(size);
-                    
                     const colliderSize = {
-                        width: 3,   // Fixed width for cat targets
-                        height: 2,  // Fixed height for cat targets
-                        depth: 4    // Fixed depth for cat targets
+                        width: 3,
+                        height: 2,
+                        depth: 4
                     };
                     
                     this.createTargetCollider(child, colliderSize);
@@ -1230,7 +1225,7 @@ export class Weapon {
         // Create wireframe helper
         const wireframeGeometry = mesh.geometry ? mesh.geometry : new THREE.BoxGeometry(0.1, 0.1, 0.1);
         const wireframeMaterial = new THREE.MeshBasicMaterial({
-            color: mesh.userData.isTarget ? 0xff0000 : 0x00ff00, // Red for targets, green for bullets
+            color: mesh.userData.isTarget ? 0xff0000 : 0x00ff00,
             wireframe: true,
             opacity: 0.7,
             transparent: true
@@ -1262,12 +1257,11 @@ export class Weapon {
     updateTargetColliders() {
         // Update target collider positions to match their parent targets
         this.targetColliders.forEach((collider, target) => {
-            if (target.parent) { // Target still exists in scene
-                // Position collider at target position with slight Y offset
+            if (target.parent) {
+                // Target still exists in scene
                 collider.position.copy(target.position);
-                collider.position.y += 1.0; // Same offset as creation
+                collider.position.y += 1.0;
                 collider.rotation.copy(target.rotation);
-                // Don't copy scale - colliders should stay fixed size
             } else {
                 // Target was removed from scene, clean up its collider
                 this.removeTargetCollider(target);
