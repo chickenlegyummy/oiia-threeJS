@@ -513,51 +513,22 @@ export class Weapon {
     }
     
     createHitEffect(position, normal) {
-        // Create bullet impact effect
-        const impactGeometry = new THREE.SphereGeometry(0.02, 8, 8);
-        const impactMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffff00,
-            transparent: true,
-            opacity: 0.8
-        });
+        // Create bullet impact effect - but only show it in debug mode or for environment hits
+        // For target hits, we'll rely on the target's own hit effect system
+        console.log('💥 Impact effect at:', position);
         
-        const impact = new THREE.Mesh(impactGeometry, impactMaterial);
-        impact.position.copy(position);
-        this.scene.add(impact);
-        
-        // Animate and remove impact
-        const startTime = Date.now();
-        const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = elapsed / 500; // 500ms duration
-            
-            if (progress >= 1) {
-                this.scene.remove(impact);
-                return;
-            }
-            
-            impact.material.opacity = 0.8 * (1 - progress);
-            impact.scale.setScalar(1 + progress * 2);
-            
-            requestAnimationFrame(animate);
-        };
-        animate();
+        // Only show impact sparks for environment hits, not target hits
+        // Target hits are handled by the target's own showHitEffect method
     }
     
     onTargetHit(target, hitInfo) {
-        console.log('Target hit!', target);
+        console.log('🎯 Target hit via collider!', target);
         
-        // Add hit effect to target
-        if (target.material) {
-            const originalColor = target.material.color.clone();
-            target.material.color.setHex(0xff0000);
-            
-            setTimeout(() => {
-                target.material.color.copy(originalColor);
-            }, 100);
-        }
+        // Only apply hit effect to the specific target that was hit
+        // The target's own hit system will handle the red flash effect
         
-        // Trigger target behavior
+        // Trigger target behavior - this will call the target's onHit method
+        // which handles the red flash effect properly
         if (target.userData.onHit) {
             target.userData.onHit(hitInfo);
         }
