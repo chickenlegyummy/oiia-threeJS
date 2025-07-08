@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/x-icon" href="https://raw.githubusercontent.com/chickenlegyummy/chickenlegyummy.github.io/refs/heads/main/public/favicon.ico">
-    <title>Oiiaiioiiiai</title>
+    <title>Oiiaiioiiiai - Multiplayer</title>
     <style>
         * {
             margin: 0;
@@ -191,40 +191,37 @@
             font-weight: bold;
         }
         
+        #hud #players {
+            color: #45b7d1;
+            font-weight: bold;
+        }
+        
         #hud.active {
             display: block;
         }
         
-        #debugPanel {
+        /* Scoreboard */
+        #scoreboard {
             position: absolute;
             top: 20px;
             right: 20px;
-            width: 280px;
             background: rgba(0, 0, 0, 0.8);
             color: white;
             padding: 15px;
             border-radius: 8px;
             font-family: 'Arial', sans-serif;
             font-size: 12px;
-            z-index: 200;
-            display: none;
+            z-index: 100;
+            min-width: 200px;
             border: 1px solid rgba(255, 255, 255, 0.2);
+            display: none;
         }
         
-        #debugPanel.active {
+        #scoreboard.active {
             display: block;
         }
         
-        /* Show cursor when debug panel is active */
-        body:has(#debugPanel.active) {
-            cursor: default !important;
-        }
-        
-        body:has(#debugPanel.active) canvas {
-            cursor: default !important;
-        }
-        
-        #debugPanel h3 {
+        #scoreboard h3 {
             margin: 0 0 10px 0;
             color: #4ecdc4;
             font-size: 14px;
@@ -232,78 +229,148 @@
             padding-bottom: 5px;
         }
         
-        .debug-control {
-            margin: 8px 0;
+        .player-score {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-        }
-        
-        .debug-control label {
-            flex: 1;
-            margin-right: 10px;
-            color: #fff;
-        }
-        
-        .debug-control input[type="range"] {
-            flex: 1;
-            margin: 0 5px;
-        }
-        
-        .debug-control .value {
-            width: 40px;
-            text-align: right;
-            color: #f9ca24;
-            font-weight: bold;
-        }
-        
-        .debug-toggle {
-            background: #4ecdc4;
-            color: black;
-            border: none;
-            padding: 5px 10px;
+            margin: 5px 0;
+            padding: 3px 5px;
             border-radius: 3px;
-            cursor: pointer;
-            font-size: 11px;
-            margin-top: 10px;
         }
         
-        .debug-toggle:hover {
-            background: #45b7d1;
+        .player-score.current-player {
+            background: rgba(78, 205, 196, 0.2);
+            border: 1px solid #4ecdc4;
         }
         
-        /* Responsive design for instructions */
-        @media (max-width: 1200px) {
-            #instructions .control-group {
-                flex-wrap: wrap;
-                justify-content: center;
-                gap: 0.5em;
-            }
-            
-            #instructions .control-item {
-                min-width: 120px;
-                margin-bottom: 1em;
-            }
+        /* Chat */
+        #chat {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 300px;
+            height: 200px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 8px;
+            padding: 10px;
+            display: none;
+            flex-direction: column;
+            z-index: 100;
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
         
-        @media (max-width: 800px) {
-            #instructions .control-group {
-                flex-direction: column;
-                align-items: center;
-            }
-            
-            #instructions .control-item {
-                margin: 0.5em 0;
-                width: 200px;
-            }
+        #chat.active {
+            display: flex;
+        }
+        
+        #chatMessages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: white;
+        }
+        
+        .chat-message {
+            margin: 3px 0;
+            word-wrap: break-word;
+        }
+        
+        .chat-username {
+            font-weight: bold;
+            color: #4ecdc4;
+        }
+        
+        #chatInput {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+            outline: none;
+        }
+        
+        #connectionStatus {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 14px;
+            z-index: 200;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        #connectionStatus.connected {
+            color: #4ecdc4;
+            border-color: #4ecdc4;
+        }
+        
+        #connectionStatus.disconnected {
+            color: #ff6b6b;
+            border-color: #ff6b6b;
+        }
+        
+        /* Player name tags */
+        .player-nametag {
+            position: absolute;
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            text-align: center;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 2px 8px;
+            border-radius: 3px;
+            z-index: 10;
+        }
+        
+        /* Death screen */
+        #deathScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(139, 0, 0, 0.8);
+            color: white;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+        }
+        
+        #deathScreen.active {
+            display: flex;
+        }
+        
+        #deathScreen h2 {
+            font-size: 3em;
+            margin-bottom: 0.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+        }
+        
+        #deathScreen p {
+            font-size: 1.5em;
+            margin-bottom: 1em;
+        }
+        
+        #respawnTimer {
+            font-size: 2em;
+            color: #4ecdc4;
         }
     </style>
 </head>
 <body>
     <div id="crosshair"></div>
     
+    <div id="connectionStatus" class="disconnected">Connecting...</div>
+    
     <div id="instructions">
-        <h1>Oiia Uwu</h1>
+        <h1>Oiia Uwu - Multiplayer</h1>
         <p>Hunt the oIiA with your UwU-47!</p>
         
         <div class="controls">
@@ -323,6 +390,8 @@
                 </div>
                 <div class="control-item">
                     <p><kbd>Ctrl/C</kbd> - Crouch</p>
+                    <p><kbd>Tab</kbd> - Scoreboard</p>
+                    <p><kbd>T</kbd> - Chat</p>
                 </div>
             </div>
         </div>
@@ -333,66 +402,31 @@
     </div>
     
     <div id="hud">
-        <div id="speed">Speed: 0</div>
+        <div id="health">Health: 100</div>
+        <div id="ammo">Ammo: 30/1200</div>
+        <div id="score">Score: 0</div>
+        <div id="players">Players: 1</div>
         <div id="position">Position: 0, 0, 0</div>
         <div id="fps">FPS: 60</div>
     </div>
     
-    <div id="debugPanel">
-        <h3>Debug Panel</h3>
-        <p style="margin: 0 0 10px 0; color: #ccc; font-size: 11px;">Press Tab to close and return to game</p>
-        
-        <div class="debug-control">
-            <label>Movement Speed:</label>
-            <input type="range" id="speedSlider" min="5" max="30" step="0.5" value="12">
-            <span class="value" id="speedValue">12.0</span>
-        </div>
-        
-        <div class="debug-control">
-            <label>Run Speed:</label>
-            <input type="range" id="runSpeedSlider" min="15" max="40" step="0.5" value="20">
-            <span class="value" id="runSpeedValue">20.0</span>
-        </div>
-        
-        <div class="debug-control">
-            <label>Jump Height:</label>
-            <input type="range" id="jumpSlider" min="5" max="25" step="0.5" value="15">
-            <span class="value" id="jumpValue">15.0</span>
-        </div>
-        
-        <div class="debug-control">
-            <label>Gravity:</label>
-            <input type="range" id="gravitySlider" min="10" max="60" step="1" value="30">
-            <span class="value" id="gravityValue">30</span>
-        </div>
-        
-        <div class="debug-control">
-            <label>Mouse Sensitivity:</label>
-            <input type="range" id="sensitivitySlider" min="0.001" max="0.01" step="0.0001" value="0.002">
-            <span class="value" id="sensitivityValue">0.002</span>
-        </div>
-        
-        <div class="debug-control">
-            <label>Damping:</label>
-            <input type="range" id="dampingSlider" min="1" max="15" step="0.5" value="8">
-            <span class="value" id="dampingValue">8.0</span>
-        </div>
-        
-        <div class="debug-control">
-            <label>Walk Bob Intensity:</label>
-            <input type="range" id="walkBobSlider" min="0" max="0.1" step="0.001" value="0.02">
-            <span class="value" id="walkBobValue">0.020</span>
-        </div>
-        
-        <div class="debug-control">
-            <label>Run Bob Intensity:</label>
-            <input type="range" id="runBobSlider" min="0" max="0.1" step="0.001" value="0.035">
-            <span class="value" id="runBobValue">0.035</span>
-        </div>
-        
-        <button class="debug-toggle" onclick="resetToDefaults()">Reset to Defaults</button>
+    <div id="scoreboard">
+        <h3>Scoreboard</h3>
+        <div id="scoreList"></div>
+    </div>
+    
+    <div id="chat">
+        <div id="chatMessages"></div>
+        <input type="text" id="chatInput" placeholder="Press T to chat..." maxlength="100">
+    </div>
+    
+    <div id="deathScreen">
+        <h2>You Died!</h2>
+        <p id="killedBy">Killed by Player</p>
+        <div id="respawnTimer">Respawning in 5</div>
     </div>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script type="importmap">
     {
         "imports": {
@@ -401,6 +435,7 @@
         }
     }
     </script>
+    <script type="module" src="src/multiplayer-client.js"></script>
     <script type="module" src="src/scene.js"></script>
     <script type="module" src="src/player.js"></script>
 </body>

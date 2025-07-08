@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Player } from './player.js';
 import { Weapon } from './weapon.js';
 import { TargetManager } from './targets.js';
+import { MultiplayerManager } from './multiplayer-client.js';
 
 // Create scene
 const scene = new THREE.Scene();
@@ -127,6 +128,7 @@ const player = new Player(camera, scene);
 // Initialize weapon system
 let weapon = null;
 let targetManager = null;
+let multiplayerManager = null;
 
 // Initialize systems asynchronously
 async function initializeSystems() {
@@ -139,31 +141,20 @@ async function initializeSystems() {
         // Initialize weapon system with player body
         weapon = new Weapon(camera, scene, audioListener, player.getPlayerBody(), player);
         
-        // Wait a bit for weapon to load, then check
-        setTimeout(() => {
-            console.log('Weapon system check:');
-            console.log('- Weapon object:', weapon);
-            console.log('- Weapon loaded:', weapon?.isLoaded);
-            console.log('- Weapon model:', weapon?.model);
-            console.log('- Player body children:', player.getPlayerBody()?.children.length);
-            console.log('- Camera children:', camera.children.length);
-            
-            // Force fallback if no weapon visible
-            if (!weapon?.model) {
-                console.log('Forcing weapon fallback model...');
-                weapon?.createFallbackModel();
-                weapon?.attachWeapon();
-            }
-        }, 2000);
-        
         // Initialize target system
         targetManager = new TargetManager(scene);
+        
+        // Initialize multiplayer AFTER other systems are ready
+        multiplayerManager = new MultiplayerManager(scene, camera, player, weapon, targetManager);
+        window.multiplayerManager = multiplayerManager;
+        
+        // Modify target manager to NOT spawn initial targets (server will provide them)
+        targetManager.spawnInitialTargets = () => {}; // Override to prevent client-side spawning
         
         // Set up callbacks after initialization
         if (targetManager) {
             targetManager.onTargetDestroyed = (points) => {
-                score += points;
-                updateScoreDisplay();
+                // Score is now handled by server
             };
         }
         
@@ -172,13 +163,16 @@ async function initializeSystems() {
                 updateAmmoDisplay(mag, total);
             };
             
-            // Initialize HUD with starting ammo after a delay
-            setTimeout(() => {
-                if (weapon) {
-                    const ammo = weapon.getAmmoCount();
-                    updateAmmoDisplay(ammo.mag, ammo.total);
+            // Modify weapon collision detection to include players
+            const originalCheckCollision = weapon.checkBulletColliderCollision.bind(weapon);
+            weapon.checkBulletColliderCollision = function(bullet, prevPosition) {
+                // First check player collisions
+                if (multiplayerManager && multiplayerManager.checkPlayerCollisions(bullet)) {
+                    return true;
                 }
-            }, 1000);
+                // Then check regular collisions
+                return originalCheckCollision(bullet, prevPosition);
+            };
         }
         
         console.log('FPS systems initialization completed');
@@ -190,125 +184,33 @@ async function initializeSystems() {
 // Initialize systems
 initializeSystems();
 
-// Score system
+// Score system (now handled by multiplayer)
 let score = 0;
 
 // HUD update functions
 function updateAmmoDisplay(mag, total) {
     const ammoElement = document.getElementById('ammo');
-    if (!ammoElement) {
-        // Create ammo display if it doesn't exist
-        const hud = document.getElementById('hud');
-        const ammoDiv = document.createElement('div');
-        ammoDiv.id = 'ammo';
-        ammoDiv.innerHTML = `Ammo: ${mag}/${total}`;
-        hud.appendChild(ammoDiv);
-    } else {
+    if (ammoElement) {
         ammoElement.innerHTML = `Ammo: ${mag}/${total}`;
     }
 }
 
-function updateScoreDisplay() {
-    const scoreElement = document.getElementById('score');
-    if (!scoreElement) {
-        // Create score display if it doesn't exist
+function updateHealthDisplay(health) {
+    const healthElement = document.getElementById('health');
+    if (!healthElement) {
+        // Create health display if it doesn't exist
         const hud = document.getElementById('hud');
-        const scoreDiv = document.createElement('div');
-        scoreDiv.id = 'score';
-        scoreDiv.innerHTML = `Score: ${score}`;
-        hud.appendChild(scoreDiv);
+        const healthDiv = document.createElement('div');
+        healthDiv.id = 'health';
+        healthDiv.innerHTML = `Health: ${health}`;
+        hud.insertBefore(healthDiv, hud.firstChild);
     } else {
-        scoreElement.innerHTML = `Score: ${score}`;
+        healthElement.innerHTML = `Health: ${health}`;
     }
 }
 
-function updateTargetsDisplay() {
-    const targetsElement = document.getElementById('targets');
-    const targetCount = targetManager ? targetManager.getTargetCount() : 0;
-    if (!targetsElement) {
-        // Create targets display if it doesn't exist
-        const hud = document.getElementById('hud');
-        const targetsDiv = document.createElement('div');
-        targetsDiv.id = 'targets';
-        targetsDiv.innerHTML = `Targets: ${targetCount}`;
-        hud.appendChild(targetsDiv);
-    } else {
-        targetsElement.innerHTML = `Targets: ${targetCount}`;
-    }
-}
-
-// Debug Panel functionality
-let debugPanelVisible = false;
-
-// Toggle debug panel with Tab key
-document.addEventListener('keydown', (event) => {
-    if (event.code === 'Tab') {
-        event.preventDefault();
-        debugPanelVisible = !debugPanelVisible;
-        const debugPanel = document.getElementById('debugPanel');
-        const instructions = document.getElementById('instructions');
-        
-        debugPanel.classList.toggle('active', debugPanelVisible);
-        
-        if (debugPanelVisible) {
-            // Opening debug panel - release pointer lock
-            if (player.isLocked) {
-                player.exitPointerLock();
-            }
-        } else {
-            // Closing debug panel - hide instructions and enable clicking to re-enter game
-            instructions.style.display = 'none';
-        }
-    }
-});
-
-// Debug panel controls
-function setupDebugControls() {
-    const controls = {
-        speed: { slider: 'speedSlider', value: 'speedValue', property: 'speed' },
-        runSpeed: { slider: 'runSpeedSlider', value: 'runSpeedValue', property: 'runSpeed' },
-        jump: { slider: 'jumpSlider', value: 'jumpValue', property: 'jumpVelocity' },
-        gravity: { slider: 'gravitySlider', value: 'gravityValue', property: 'gravity' },
-        sensitivity: { slider: 'sensitivitySlider', value: 'sensitivityValue', property: 'mouseSensitivity' },
-        damping: { slider: 'dampingSlider', value: 'dampingValue', property: 'damping' },
-        walkBob: { slider: 'walkBobSlider', value: 'walkBobValue', property: 'walkBobIntensity' },
-        runBob: { slider: 'runBobSlider', value: 'runBobValue', property: 'runBobIntensity' }
-    };
-    
-    Object.entries(controls).forEach(([key, control]) => {
-        const slider = document.getElementById(control.slider);
-        const valueDisplay = document.getElementById(control.value);
-        
-        slider.addEventListener('input', (e) => {
-            const value = parseFloat(e.target.value);
-            player[control.property] = value;
-            valueDisplay.textContent = value.toFixed(3);
-        });
-    });
-}
-
-// Reset to default values
-window.resetToDefaults = function() {
-    const defaults = {
-        speedSlider: 12,
-        runSpeedSlider: 20,
-        jumpSlider: 15,
-        gravitySlider: 30,
-        sensitivitySlider: 0.002,
-        dampingSlider: 8,
-        walkBobSlider: 0.02,
-        runBobSlider: 0.035
-    };
-    
-    Object.entries(defaults).forEach(([sliderId, value]) => {
-        const slider = document.getElementById(sliderId);
-        slider.value = value;
-        slider.dispatchEvent(new Event('input'));
-    });
-};
-
-// Initialize debug controls
-setupDebugControls();
+// Initialize health display
+updateHealthDisplay(100);
 
 // Handle window resize
 function onWindowResize() {
@@ -355,16 +257,9 @@ function animate() {
     
     // Update HUD with player info
     if (player.isLocked) {
-        const speed = Math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z);
         const pos = player.getCameraWorldPosition();
-        document.getElementById('speed').textContent = `Speed: ${speed.toFixed(1)}`;
         document.getElementById('position').textContent = `Position: ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}`;
         document.getElementById('hud').classList.add('active');
-        
-        // Update additional HUD elements (if systems loaded)
-        if (targetManager) {
-            updateTargetsDisplay();
-        }
     } else {
         document.getElementById('hud').classList.remove('active');
     }

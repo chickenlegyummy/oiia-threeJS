@@ -1,0 +1,15 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.log
+dist/
+build/
+.vscode/
+.idea/
+
+package-lock.json
