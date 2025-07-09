@@ -34,27 +34,11 @@ export class Player {
         this.crouchHeight = 0.8;
         this.radius = 0.3;
         
-        // Mouse look - Quaternion based
+        // Mouse look
         this.isLocked = false;
+        this.euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        this.PI_2 = Math.PI / 2;
         this.mouseSensitivity = 0.002;
-        
-        // Quaternion rotation system
-        this.yawObject = new THREE.Object3D(); // For horizontal rotation
-        this.pitchObject = new THREE.Object3D(); // For vertical rotation
-        this.yawObject.add(this.pitchObject);
-        this.pitchObject.add(this.camera);
-        
-        // Initialize camera position in pitch object
-        this.camera.position.set(0, 0, 0);
-        this.yawObject.position.copy(new THREE.Vector3(0, 1.6, 5));
-        
-        // Track rotation values for clamping and other systems
-        this.pitch = 0;
-        this.yaw = 0;
-        this.maxPitch = Math.PI / 2 - 0.01; // Slightly less than 90 degrees to avoid gimbal lock
-        
-        // Add yaw object to scene
-        this.scene.add(this.yawObject);
         
         // Collision detection
         this.raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2);
@@ -143,7 +127,7 @@ export class Player {
         
         // Position the body group
         this.body = bodyGroup;
-        this.body.position.copy(this.yawObject.position);
+        this.body.position.copy(this.camera.position);
         this.body.position.y -= this.height / 2; // Adjust so camera is at head level
         
         // Add body to scene
@@ -195,22 +179,18 @@ export class Player {
             });
         });
         
-        // Enhanced mouse movement with quaternion rotation
+        // Enhanced mouse movement with smoothing
+        let mouseX = 0, mouseY = 0;
         document.addEventListener('mousemove', (event) => {
             if (this.isLocked) {
-                const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
-                const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+                mouseX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+                mouseY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
                 
-                // Update yaw (horizontal rotation)
-                this.yaw -= movementX * this.mouseSensitivity;
-                
-                // Update pitch (vertical rotation) with clamping
-                this.pitch -= movementY * this.mouseSensitivity;
-                this.pitch = Math.max(-this.maxPitch, Math.min(this.maxPitch, this.pitch));
-                
-                // Apply rotations using quaternions
-                this.yawObject.rotation.y = this.yaw;
-                this.pitchObject.rotation.x = this.pitch;
+                this.euler.setFromQuaternion(this.camera.quaternion);
+                this.euler.y -= mouseX * this.mouseSensitivity;
+                this.euler.x -= mouseY * this.mouseSensitivity;
+                this.euler.x = Math.max(-this.PI_2, Math.min(this.PI_2, this.euler.x));
+                this.camera.quaternion.setFromEuler(this.euler);
             }
         });
         
@@ -394,7 +374,7 @@ export class Player {
     
     checkCollisions() {
         // Ground collision detection
-        this.raycaster.ray.origin.copy(this.yawObject.position);
+        this.raycaster.ray.origin.copy(this.camera.position);
         this.raycaster.ray.direction.set(0, -1, 0);
         
         // Filter out player body parts from collision detection
@@ -406,7 +386,7 @@ export class Player {
         if (intersections.length > 0) {
             const distance = intersections[0].distance;
             if (distance < targetHeight) {
-                this.yawObject.position.y = intersections[0].point.y + targetHeight;
+                this.camera.position.y = intersections[0].point.y + targetHeight;
                 this.velocity.y = Math.max(0, this.velocity.y);
                 
                 // Landing effect
@@ -533,7 +513,7 @@ export class Player {
         
         // Update direction based on movement keys
         this.direction.z = Number(this.moveForward) - Number(this.moveBackward);
-        this.direction.x = Number(this.moveLeft) - Number(this.moveRight);
+        this.direction.x = Number(this.moveLeft) - Number(this.moveRight); // Fixed: swapped left and right
         this.direction.normalize();
         
         // Apply movement forces
@@ -544,44 +524,41 @@ export class Player {
             this.velocity.x -= this.direction.x * currentSpeed * clampedDelta;
         }
         
-        // Apply movement relative to yaw rotation
-        const moveVector = new THREE.Vector3(
-            this.velocity.x * clampedDelta,
-            this.velocity.y * clampedDelta,
-            this.velocity.z * clampedDelta
-        );
+        // Apply movement with collision detection
+        const oldPosition = this.camera.position.clone();
         
-        // Rotate movement vector by yaw
-        moveVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
+        // Move horizontally
+        this.camera.translateX(this.velocity.x * clampedDelta);
+        this.camera.translateZ(this.velocity.z * clampedDelta);
         
-        // Apply movement
-        this.yawObject.position.add(moveVector);
+        // Move vertically
+        this.camera.position.y += this.velocity.y * clampedDelta;
         
         // Check collisions and adjust position
         this.checkCollisions();
         
         // Update body position after collision checks to prevent conflicts
         if (this.body) {
-            const targetPosition = this.yawObject.position.clone();
+            const targetPosition = this.camera.position.clone();
             targetPosition.y -= this.height / 2; // Keep body centered below camera
             
             // Smooth position update to prevent jittering
             this.body.position.lerp(targetPosition, 0.6);
             
-            // Update body rotation to match yaw only
-            this.body.rotation.y = this.yaw;
+            // Update body rotation to match camera's Y rotation only (not pitch)
+            this.body.rotation.y = this.euler.y;
         }
         
         // Prevent falling through the world
         const minHeight = this.isCrouching ? this.crouchHeight : this.height;
-        if (this.yawObject.position.y < minHeight) {
+        if (this.camera.position.y < minHeight) {
             // Landing effect when hitting the floor
             if (!this.canJump && this.wasInAir) {
                 this.addCameraShake(this.landShakeIntensity, this.landShakeDuration);
                 this.wasInAir = false;
             }
             
-            this.yawObject.position.y = minHeight;
+            this.camera.position.y = minHeight;
             this.velocity.y = 0;
             this.canJump = true;
         }
@@ -612,29 +589,5 @@ export class Player {
 
     getPlayerBody() {
         return this.body;
-    }
-    
-    // Add getter for camera world position
-    getCameraWorldPosition() {
-        const worldPos = new THREE.Vector3();
-        this.camera.getWorldPosition(worldPos);
-        return worldPos;
-    }
-    
-    // Add getter for camera world quaternion
-    getCameraWorldQuaternion() {
-        const worldQuat = new THREE.Quaternion();
-        this.camera.getWorldQuaternion(worldQuat);
-        return worldQuat;
-    }
-    
-    // Compatibility getter for euler (used by weapon system)
-    get euler() {
-        // Return an euler-like object for compatibility
-        return {
-            x: this.pitch,
-            y: this.yaw,
-            z: 0
-        };
     }
 }
