@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export class TargetManager {
-    constructor(scene) {
+    constructor(scene, networkManager = null) {
         this.scene = scene;
+        this.networkManager = networkManager;
         this.targets = [];
         this.loader = new GLTFLoader();
         this.targetModel = null;
@@ -113,7 +114,7 @@ export class TargetManager {
         target.userData.health = options.health || 100;
         target.userData.maxHealth = target.userData.health;
         target.userData.points = options.points || 10;
-        target.userData.id = Math.random().toString(36).substr(2, 9);
+        target.userData.targetId = Math.random().toString(36).substr(2, 9); // Use targetId for consistency
         
         // Animation properties
         target.userData.bobSpeed = 0.5 + Math.random() * 1.0;
@@ -236,8 +237,16 @@ export class TargetManager {
         animateParticles();
     }
     
-    destroyTarget(target) {
+    destroyTarget(target, sendNetwork = true) {
         console.log(`Target destroyed! Points: ${target.userData.points}`);
+        
+        // Send network event for multiplayer (unless this is from a network event)
+        if (sendNetwork && this.networkManager && this.networkManager.isConnected) {
+            this.networkManager.sendTargetHit({
+                targetId: target.userData.targetId,
+                points: target.userData.points
+            });
+        }
         
         // Create destruction effect
         this.createDestructionEffect(target.position);
@@ -259,6 +268,16 @@ export class TargetManager {
         setTimeout(() => {
             this.spawnRandomTarget();
         }, 2000 + Math.random() * 3000);
+    }
+    
+    // Find and destroy target by ID (for multiplayer events)
+    destroyTargetById(targetId, sendNetwork = true) {
+        const target = this.targets.find(t => t.userData.targetId === targetId);
+        if (target) {
+            this.destroyTarget(target, sendNetwork);
+            return true;
+        }
+        return false;
     }
     
     createDestructionEffect(position) {

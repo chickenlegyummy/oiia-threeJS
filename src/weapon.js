@@ -2,12 +2,13 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export class Weapon {
-    constructor(camera, scene, audioListener, playerBody = null, player = null) {
+    constructor(camera, scene, audioListener, playerBody = null, player = null, networkManager = null) {
         this.camera = camera;
         this.scene = scene;
         this.audioListener = audioListener;
         this.playerBody = playerBody; // Player body to attach weapon to
         this.player = player; // Reference to player for accessing euler rotation
+        this.networkManager = networkManager; // For multiplayer events
         
         // Weapon properties
         this.model = null;
@@ -444,6 +445,22 @@ export class Weapon {
         
         this.createBulletTrail(muzzlePos, shootDirection);
         
+        // Send shooting event to server for multiplayer
+        if (this.networkManager && this.networkManager.isConnected) {
+            this.networkManager.sendPlayerShoot({
+                position: {
+                    x: muzzlePos.x,
+                    y: muzzlePos.y,
+                    z: muzzlePos.z
+                },
+                direction: {
+                    x: shootDirection.x,
+                    y: shootDirection.y,
+                    z: shootDirection.z
+                }
+            });
+        }
+        
         // Play sound
         if (this.shootSound && this.shootSound.buffer) {
             if (this.shootSound.isPlaying) {
@@ -767,7 +784,7 @@ export class Weapon {
     }
     
     checkBulletColliderCollision(bullet, prevPosition) {
-        const bulletCollider = this.bulletColliders.get(bullet.mesh);
+        const bulletCollider = this.bulletColliders.get(bullet);
         if (!bulletCollider) return false;
         
         // Create raycaster from previous position to current position
@@ -1272,5 +1289,45 @@ export class Weapon {
                 this.removeTargetCollider(target);
             }
         });
+    }
+
+    // Create muzzle flash effect for other players (multiplayer)
+    createMuzzleFlash(position, direction) {
+        // Create a temporary muzzle flash at the specified position
+        const flashGeometry = new THREE.PlaneGeometry(0.5, 0.5);
+        const flashMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffff00,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+        flash.position.copy(position);
+        
+        // Orient flash towards direction
+        const lookDirection = new THREE.Vector3().copy(direction);
+        flash.lookAt(flash.position.clone().add(lookDirection));
+        
+        this.scene.add(flash);
+        
+        // Animate flash
+        let flashTime = 0;
+        const flashDuration = 0.1;
+        
+        const animateFlash = () => {
+            flashTime += 0.016;
+            flash.material.opacity = Math.max(0, 0.8 * (1 - flashTime / flashDuration));
+            
+            if (flashTime < flashDuration) {
+                requestAnimationFrame(animateFlash);
+            } else {
+                this.scene.remove(flash);
+                flash.geometry.dispose();
+                flash.material.dispose();
+            }
+        };
+        
+        animateFlash();
     }
 }

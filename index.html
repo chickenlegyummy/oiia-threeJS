@@ -191,6 +191,20 @@
             font-weight: bold;
         }
         
+        #hud #players {
+            color: #4ecdc4;
+            font-weight: bold;
+        }
+        
+        #hud #connection {
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+        
+        #hud #connection.connected {
+            color: #4ecdc4;
+        }
+        
         #hud.active {
             display: block;
         }
@@ -336,6 +350,8 @@
         <div id="speed">Speed: 0</div>
         <div id="position">Position: 0, 0, 0</div>
         <div id="fps">FPS: 60</div>
+        <div id="players">Players: 1</div>
+        <div id="connection">🔴 Offline</div>
     </div>
     
     <div id="debugPanel">
@@ -392,6 +408,7 @@
         
         <button class="debug-toggle" onclick="resetToDefaults()">Reset to Defaults</button>
         <button class="debug-toggle" onclick="resetCamera()" style="margin-left: 10px;">Reset Camera Rotation</button>
+        <button class="debug-toggle" onclick="debugMultiplayer()" style="margin-left: 10px; background: #ff6b6b;">Debug MP</button>
     </div>
 
     <script type="importmap">
@@ -402,6 +419,9 @@
         }
     }
     </script>
+    
+    <!-- Socket.IO Client for multiplayer -->
+    <script src="/socket.io/socket.io.js"></script>
     
     <script>
         // Global debug functions
@@ -447,6 +467,22 @@
                 console.log('Camera rotation reset');
             }
         }
+        
+        // Debug multiplayer function
+        function debugMultiplayer() {
+            console.log('=== MULTIPLAYER DEBUG ===');
+            console.log('Connected:', window.networkManager?.isConnected);
+            console.log('Player ID:', window.networkManager?.playerId);
+            console.log('Remote Players:', window.remotePlayers?.size);
+            console.log('Remote Players Map:', window.remotePlayers);
+            if (window.networkManager?.socket) {
+                console.log('Socket Connected:', window.networkManager.socket.connected);
+                console.log('Socket ID:', window.networkManager.socket.id);
+            }
+        }
+        
+        // Expose debug function globally
+        window.debugMultiplayer = debugMultiplayer;
         
         // Update slider values in real-time
         document.addEventListener('DOMContentLoaded', function() {

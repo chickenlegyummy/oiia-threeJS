@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Player } from './player.js';
 import { Weapon } from './weapon.js';
 import { TargetManager } from './targets.js';
+import { NetworkManager, RemotePlayer } from './network.js';
 
 // Create scene
 const scene = new THREE.Scene();
@@ -138,6 +139,111 @@ const player = new Player(camera, scene);
 // Expose player globally for debug functions
 window.gamePlayer = player;
 
+// Initialize multiplayer
+const networkManager = new NetworkManager();
+const remotePlayers = new Map();
+
+// Expose for debugging
+window.networkManager = networkManager;
+window.remotePlayers = remotePlayers;
+
+// Set up networking callbacks
+networkManager.onPlayerJoined = (playerData) => {
+    console.log('🎮 Creating remote player:', playerData.id);
+    try {
+        const remotePlayer = new RemotePlayer(scene, playerData);
+        remotePlayers.set(playerData.id, remotePlayer);
+        updatePlayerCount();
+        console.log('👥 Total remote players:', remotePlayers.size);
+    } catch (error) {
+        console.error('❌ Error creating remote player:', error);
+    }
+};
+
+networkManager.onPlayerLeft = (playerId) => {
+    console.log('🚪 Removing remote player:', playerId);
+    const remotePlayer = remotePlayers.get(playerId);
+    if (remotePlayer) {
+        remotePlayer.destroy();
+        remotePlayers.delete(playerId);
+    }
+    updatePlayerCount();
+    console.log('👥 Total remote players:', remotePlayers.size);
+};
+
+networkManager.onPlayerUpdate = (playerUpdates) => {
+    // console.log('🔄 Updating', playerUpdates.size, 'remote players');
+    playerUpdates.forEach((playerData, playerId) => {
+        const remotePlayer = remotePlayers.get(playerId);
+        if (remotePlayer) {
+            remotePlayer.updateFromNetwork(playerData);
+        } else {
+            // Create new remote player if not exists
+            console.log('🆕 Creating new remote player from update:', playerId);
+            try {
+                const newRemotePlayer = new RemotePlayer(scene, playerData);
+                remotePlayers.set(playerId, newRemotePlayer);
+                updatePlayerCount();
+            } catch (error) {
+                console.error('❌ Error creating remote player from update:', error);
+            }
+        }
+    });
+};
+
+networkManager.onPlayerShot = (shotData) => {
+    // Create visual effect for other player's shot
+    if (weapon) {
+        weapon.createMuzzleFlash(shotData.position, shotData.direction);
+    }
+};
+
+networkManager.onTargetDestroyed = (destroyData) => {
+    // Handle target destruction from other players
+    if (targetManager) {
+        targetManager.destroyTargetById(destroyData.targetId, false); // false = don't send network event
+        if (destroyData.playerId !== networkManager.playerId) {
+            console.log(`Player ${destroyData.playerId} destroyed a target`);
+        }
+    }
+};
+
+networkManager.onGameStateReceived = (gameState) => {
+    console.log('🎮 Initial game state received, players:', gameState.players.length);
+    updatePlayerCount();
+    updateConnectionStatus(true);
+    
+    // Create remote players from initial state
+    gameState.players.forEach(playerData => {
+        if (playerData.id !== networkManager.playerId) {
+            console.log('🧑‍🤝‍🧑 Creating initial remote player:', playerData.id);
+            try {
+                const remotePlayer = new RemotePlayer(scene, playerData);
+                remotePlayers.set(playerData.id, remotePlayer);
+            } catch (error) {
+                console.error('❌ Error creating initial remote player:', error);
+            }
+        }
+    });
+    updatePlayerCount();
+};
+
+networkManager.onConnectionChange = (connected) => {
+    updateConnectionStatus(connected);
+    if (!connected) {
+        // Clear remote players when disconnected
+        remotePlayers.forEach(remotePlayer => {
+            remotePlayer.destroy();
+        });
+        remotePlayers.clear();
+        updatePlayerCount();
+    }
+};
+
+// Connect to multiplayer server immediately
+console.log('🚀 Initializing multiplayer connection...');
+networkManager.connect();
+
 // Initialize weapon system
 let weapon = null;
 let targetManager = null;
@@ -148,7 +254,7 @@ async function initializeSystems() {
         console.log('Starting initialization of FPS systems...');
         
         // Initialize weapon system with player body
-        weapon = new Weapon(camera, scene, audioListener, player.getPlayerBody(), player);
+        weapon = new Weapon(camera, scene, audioListener, player.getPlayerBody(), player, networkManager);
         
         // Wait a bit for weapon to load, then check
         setTimeout(() => {
@@ -168,7 +274,7 @@ async function initializeSystems() {
         }, 2000);
         
         // Initialize target system
-        targetManager = new TargetManager(scene);
+        targetManager = new TargetManager(scene, networkManager);
         
         // Set up callbacks after initialization
         if (targetManager) {
@@ -245,6 +351,37 @@ function updateTargetsDisplay() {
         hud.appendChild(targetsDiv);
     } else {
         targetsElement.innerHTML = `Targets: ${targetCount}`;
+    }
+}
+
+// Update connection status and player count
+function updateConnectionStatus(connected) {
+    const connectionElement = document.getElementById('connection');
+    if (connectionElement) {
+        if (connected) {
+            connectionElement.textContent = '🟢 Online';
+            connectionElement.classList.add('connected');
+        } else {
+            connectionElement.textContent = '🔴 Offline';
+            connectionElement.classList.remove('connected');
+        }
+    }
+}
+
+function updatePlayerCount() {
+    const playersElement = document.getElementById('players');
+    if (playersElement) {
+        const playerCount = remotePlayers.size + 1; // +1 for local player
+        playersElement.textContent = `Players: ${playerCount}`;
+        
+        // Change color based on player count to make it more obvious
+        if (playerCount > 1) {
+            playersElement.style.color = '#f9ca24'; // Yellow when multiplayer
+            playersElement.style.fontWeight = 'bold';
+        } else {
+            playersElement.style.color = '#4ecdc4'; // Default color
+            playersElement.style.fontWeight = 'normal';
+        }
     }
 }
 
@@ -335,15 +472,19 @@ window.addEventListener('resize', onWindowResize);
 let time = 0;
 let frameCount = 0;
 let lastFpsTime = performance.now();
+let lastTime = performance.now();
 
 function animate() {
     requestAnimationFrame(animate);
+    
+    const currentTime = performance.now();
+    const deltaTime = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
     
     time += 0.016;
     frameCount++;
     
     // Update FPS counter every second
-    const currentTime = performance.now();
     if (currentTime - lastFpsTime >= 1000) {
         const fps = Math.round((frameCount * 1000) / (currentTime - lastFpsTime));
         document.getElementById('fps').textContent = `FPS: ${fps}`;
@@ -353,6 +494,53 @@ function animate() {
     
     // Update player
     player.update();
+    
+    // Send player state to server
+    if (networkManager.isConnected && player.isLocked) {
+        const playerInput = {
+            position: {
+                x: player.camera.position.x,
+                y: player.camera.position.y,
+                z: player.camera.position.z
+            },
+            rotation: {
+                x: player.rotationX,
+                y: player.rotationY
+            },
+            velocity: {
+                x: player.velocity.x,
+                y: player.velocity.y,
+                z: player.velocity.z
+            },
+            isMoving: player.isWalking,
+            isCrouching: player.isCrouching,
+            isRunning: player.isRunning
+        };
+        networkManager.sendPlayerInput(playerInput);
+    } else if (networkManager.isConnected && !player.isLocked) {
+        // Send basic position even when not locked, in case player is in menu
+        const basicInput = {
+            position: {
+                x: player.camera.position.x,
+                y: player.camera.position.y,
+                z: player.camera.position.z
+            },
+            rotation: {
+                x: player.rotationX || 0,
+                y: player.rotationY || 0
+            },
+            velocity: { x: 0, y: 0, z: 0 },
+            isMoving: false,
+            isCrouching: false,
+            isRunning: false
+        };
+        networkManager.sendPlayerInput(basicInput);
+    }
+    
+    // Update remote players
+    remotePlayers.forEach(remotePlayer => {
+        remotePlayer.update(deltaTime);
+    });
     
     // Update weapon system (if loaded)
     if (weapon) {
