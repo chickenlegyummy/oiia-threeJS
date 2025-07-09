@@ -391,6 +391,7 @@
         </div>
         
         <button class="debug-toggle" onclick="resetToDefaults()">Reset to Defaults</button>
+        <button class="debug-toggle" onclick="resetCamera()" style="margin-left: 10px;">Reset Camera Rotation</button>
     </div>
 
     <script type="importmap">
@@ -401,6 +402,97 @@
         }
     }
     </script>
+    
+    <script>
+        // Global debug functions
+        function resetToDefaults() {
+            // Reset debug sliders to default values
+            document.getElementById('speedSlider').value = 12;
+            document.getElementById('speedValue').textContent = '12.0';
+            document.getElementById('runSpeedSlider').value = 20;
+            document.getElementById('runSpeedValue').textContent = '20.0';
+            document.getElementById('jumpSlider').value = 15;
+            document.getElementById('jumpValue').textContent = '15.0';
+            document.getElementById('gravitySlider').value = 30;
+            document.getElementById('gravityValue').textContent = '30';
+            document.getElementById('sensitivitySlider').value = 0.002;
+            document.getElementById('sensitivityValue').textContent = '0.002';
+            document.getElementById('dampingSlider').value = 8;
+            document.getElementById('dampingValue').textContent = '8.0';
+            document.getElementById('walkBobSlider').value = 0.02;
+            document.getElementById('walkBobValue').textContent = '0.020';
+            document.getElementById('runBobSlider').value = 0.035;
+            document.getElementById('runBobValue').textContent = '0.035';
+            
+            // Apply the values if player exists
+            if (window.gamePlayer) {
+                window.gamePlayer.speed = 12.0;
+                window.gamePlayer.runSpeed = 20.0;
+                window.gamePlayer.jumpVelocity = 15.0;
+                window.gamePlayer.gravity = 30.0;
+                window.gamePlayer.mouseSensitivity = 0.002;
+                window.gamePlayer.damping = 8.0;
+                window.gamePlayer.walkBobIntensity = 0.02;
+                window.gamePlayer.runBobIntensity = 0.035;
+            }
+        }
+        
+        function resetCamera() {
+            // Reset camera rotation to prevent any accumulated errors
+            if (window.gamePlayer) {
+                window.gamePlayer.rotationX = 0;
+                window.gamePlayer.rotationY = 0;
+                window.gamePlayer.euler.set(0, 0, 0, 'YXZ');
+                window.gamePlayer.camera.quaternion.setFromEuler(window.gamePlayer.euler);
+                console.log('Camera rotation reset');
+            }
+        }
+        
+        // Update slider values in real-time
+        document.addEventListener('DOMContentLoaded', function() {
+            const sliders = document.querySelectorAll('input[type="range"]');
+            sliders.forEach(slider => {
+                slider.addEventListener('input', function() {
+                    const valueSpan = document.getElementById(this.id.replace('Slider', 'Value'));
+                    if (valueSpan) {
+                        const value = parseFloat(this.value);
+                        valueSpan.textContent = value.toFixed(3);
+                        
+                        // Apply changes to player if it exists
+                        if (window.gamePlayer) {
+                            switch(this.id) {
+                                case 'speedSlider':
+                                    window.gamePlayer.speed = value;
+                                    break;
+                                case 'runSpeedSlider':
+                                    window.gamePlayer.runSpeed = value;
+                                    break;
+                                case 'jumpSlider':
+                                    window.gamePlayer.jumpVelocity = value;
+                                    break;
+                                case 'gravitySlider':
+                                    window.gamePlayer.gravity = value;
+                                    break;
+                                case 'sensitivitySlider':
+                                    window.gamePlayer.mouseSensitivity = value;
+                                    break;
+                                case 'dampingSlider':
+                                    window.gamePlayer.damping = value;
+                                    break;
+                                case 'walkBobSlider':
+                                    window.gamePlayer.walkBobIntensity = value;
+                                    break;
+                                case 'runBobSlider':
+                                    window.gamePlayer.runBobIntensity = value;
+                                    break;
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    </script>
+    
     <script type="module" src="src/scene.js"></script>
     <script type="module" src="src/player.js"></script>
 </body>

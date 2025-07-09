@@ -34,11 +34,16 @@ export class Player {
         this.crouchHeight = 0.8;
         this.radius = 0.3;
         
-        // Mouse look
+        // Mouse look - improved rotation handling
         this.isLocked = false;
         this.euler = new THREE.Euler(0, 0, 0, 'YXZ');
         this.PI_2 = Math.PI / 2;
         this.mouseSensitivity = 0.002;
+        
+        // Enhanced rotation tracking to prevent accumulation errors
+        this.rotationX = 0;
+        this.rotationY = 0;
+        this.maxPitch = Math.PI / 2 - 0.01; // Slightly less than 90 degrees to prevent gimbal lock
         
         // Collision detection
         this.raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2);
@@ -179,17 +184,30 @@ export class Player {
             });
         });
         
-        // Enhanced mouse movement with smoothing
-        let mouseX = 0, mouseY = 0;
+        // Enhanced mouse movement with smoothing and proper bounds checking
         document.addEventListener('mousemove', (event) => {
             if (this.isLocked) {
-                mouseX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
-                mouseY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+                // Get movement values with cross-browser compatibility
+                const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+                const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
                 
-                this.euler.setFromQuaternion(this.camera.quaternion);
-                this.euler.y -= mouseX * this.mouseSensitivity;
-                this.euler.x -= mouseY * this.mouseSensitivity;
-                this.euler.x = Math.max(-this.PI_2, Math.min(this.PI_2, this.euler.x));
+                // Clamp movement values to prevent large jumps (fixes browser/hardware inconsistencies)
+                const clampedMovementX = Math.max(-50, Math.min(50, movementX));
+                const clampedMovementY = Math.max(-50, Math.min(50, movementY));
+                
+                // Update rotation values directly to avoid Euler accumulation issues
+                this.rotationY -= clampedMovementX * this.mouseSensitivity;
+                this.rotationX -= clampedMovementY * this.mouseSensitivity;
+                
+                // Clamp pitch to prevent gimbal lock and over-rotation
+                this.rotationX = Math.max(-this.maxPitch, Math.min(this.maxPitch, this.rotationX));
+                
+                // Normalize yaw to prevent accumulation (keep between -PI and PI)
+                while (this.rotationY > Math.PI) this.rotationY -= 2 * Math.PI;
+                while (this.rotationY < -Math.PI) this.rotationY += 2 * Math.PI;
+                
+                // Apply rotation to camera using clean Euler values
+                this.euler.set(this.rotationX, this.rotationY, 0, 'YXZ');
                 this.camera.quaternion.setFromEuler(this.euler);
             }
         });
@@ -546,7 +564,7 @@ export class Player {
             this.body.position.lerp(targetPosition, 0.6);
             
             // Update body rotation to match camera's Y rotation only (not pitch)
-            this.body.rotation.y = this.euler.y;
+            this.body.rotation.y = this.rotationY; // Use direct rotation value instead of euler.y
         }
         
         // Prevent falling through the world

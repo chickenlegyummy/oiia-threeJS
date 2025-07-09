@@ -1106,10 +1106,9 @@ export class Weapon {
     updateWeaponRotation() {
         if (!this.model || !this.player) return;
         
-        // Get player's euler rotation for accurate camera tracking
-        const cameraEuler = this.player.euler;
-        
-        if (!cameraEuler) return;
+        // Use player's direct rotation values for more stable tracking
+        const pitchRotation = this.player.rotationX || 0;
+        const yawRotation = this.player.rotationY || 0;
         
         // Calculate weapon rotation based on camera rotation
         // In CS2/modern FPS style, the weapon should:
@@ -1134,17 +1133,17 @@ export class Weapon {
             rollInfluence *= 0.5;
         }
         
-        // Calculate yaw movement speed for dynamic roll effect
-        const yawDelta = cameraEuler.y - this.lastCameraRotation.y;
+        // Calculate yaw movement speed for dynamic roll effect using direct rotation values
+        const yawDelta = yawRotation - (this.lastCameraRotation.y || 0);
         const rollFromYaw = yawDelta * rollInfluence * 50; // Scale for visible effect
         
         // Store current rotation for next frame
-        this.lastCameraRotation.copy(cameraEuler);
+        this.lastCameraRotation.set(pitchRotation, yawRotation, 0);
         
-        // Calculate the weapon's target rotation
+        // Calculate the weapon's target rotation using stable values
         const targetRotation = new THREE.Euler(
-            this.weaponRotationOffset.x + (cameraEuler.x * pitchInfluence), // Pitch follows camera
-            this.weaponRotationOffset.y + (cameraEuler.y * yawInfluence),   // Slight yaw sway
+            this.weaponRotationOffset.x + (pitchRotation * pitchInfluence), // Pitch follows camera
+            this.weaponRotationOffset.y + (yawRotation * yawInfluence),     // Slight yaw sway
             this.weaponRotationOffset.z + rollFromYaw, // Dynamic roll from movement
             'YXZ'
         );

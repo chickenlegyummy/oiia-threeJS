@@ -135,6 +135,9 @@ scene.add(floor);
 // Initialize player
 const player = new Player(camera, scene);
 
+// Expose player globally for debug functions
+window.gamePlayer = player;
+
 // Initialize weapon system
 let weapon = null;
 let targetManager = null;
