@@ -196,11 +196,20 @@ networkManager.onPlayerShot = (shotData) => {
     console.log('📍 Shot position:', shotData.position);
     console.log('🎯 Shot direction:', shotData.direction);
     console.log('👥 Current remote players:', remotePlayers.size);
+    console.log('🔍 Available player IDs:', Array.from(remotePlayers.keys()));
     
     // Find the remote player who shot
     const remotePlayer = remotePlayers.get(shotData.playerId);
     if (remotePlayer) {
         console.log('✅ Found remote player for shot, calling onShoot');
+        
+        // Verify the remote player has networkManager
+        if (remotePlayer.networkManager) {
+            console.log('✅ Remote player has networkManager reference');
+        } else {
+            console.error('❌ Remote player missing networkManager reference!');
+        }
+        
         remotePlayer.onShoot(shotData);
     } else {
         // If remote player not found, just create a basic effect
@@ -306,7 +315,7 @@ networkManager.onGameStateReceived = (gameState) => {
         if (playerData.id !== networkManager.playerId) {
             console.log('🧑‍🤝‍🧑 Creating initial remote player:', playerData.id);
             try {
-                const remotePlayer = new RemotePlayer(scene, playerData);
+                const remotePlayer = new RemotePlayer(scene, playerData, networkManager);
                 remotePlayers.set(playerData.id, remotePlayer);
             } catch (error) {
                 console.error('❌ Error creating initial remote player:', error);

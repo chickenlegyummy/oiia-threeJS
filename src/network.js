@@ -219,6 +219,13 @@ export class RemotePlayer {
         
         console.log('🔧 Creating RemotePlayer with data:', playerData);
         
+        // Add warning if networkManager is not provided
+        if (!networkManager) {
+            console.warn('⚠️ RemotePlayer created without networkManager - bullet trails will not work for player:', this.id);
+        } else {
+            console.log('✅ RemotePlayer created with networkManager for player:', this.id);
+        }
+        
         // Initialize ammo model asynchronously
         this.initializeAmmoModel();
         
@@ -520,6 +527,12 @@ export class RemotePlayer {
         console.log('💥 Remote player', this.id, 'shot!');
         console.log('🎯 Shoot data:', shootData);
         
+        // Check if we have the network manager for bullet trails
+        if (!this.networkManager) {
+            console.error('❌ Cannot create bullet trail - no networkManager reference for player:', this.id);
+            return;
+        }
+        
         // Create muzzle flash effect
         if (this.weapon) {
             console.log('✨ Creating muzzle flash for remote player');
@@ -541,7 +554,13 @@ export class RemotePlayer {
         ).normalize();
         
         console.log('🚀 Creating bullet trail from:', startPos, 'direction:', direction);
-        await this.createBulletTrail(startPos, direction);
+        
+        try {
+            await this.createBulletTrail(startPos, direction);
+            console.log('✅ Bullet trail created successfully for remote player:', this.id);
+        } catch (error) {
+            console.error('❌ Error creating bullet trail for remote player:', this.id, error);
+        }
     }
 
     createMuzzleFlash() {
