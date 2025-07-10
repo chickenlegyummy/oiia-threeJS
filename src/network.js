@@ -11,6 +11,14 @@ export class NetworkManager {
         this.lastSentUpdate = 0;
         this.updateRate = 1000 / 20; // Send updates 20 times per second
         
+        // Shared ammo model for all remote players
+        this.ammoModel = null;
+        this.ammoModelLoaded = false;
+        this.ammoModelPromise = null;
+        
+        // Initialize ammo model loading
+        this.initializeAmmoModel();
+        
         // Callbacks
         this.onPlayerJoined = null;
         this.onPlayerLeft = null;
@@ -19,6 +27,58 @@ export class NetworkManager {
         this.onTargetDestroyed = null;
         this.onGameStateReceived = null;
         this.onConnectionChange = null;
+    }
+
+    async initializeAmmoModel() {
+        console.log('🔫 Starting ammo model initialization...');
+        this.ammoModelPromise = this.loadAmmoModel();
+        await this.ammoModelPromise;
+        console.log('🔫 Ammo model initialization complete');
+    }
+
+    async getAmmoModel() {
+        // Wait for ammo model to be loaded if it's not ready yet
+        if (!this.ammoModelLoaded && this.ammoModelPromise) {
+            await this.ammoModelPromise;
+        }
+        return this.ammoModel;
+    }
+
+    async loadAmmoModel() {
+        const loader = new GLTFLoader();
+        
+        try {
+            const gltf = await new Promise((resolve, reject) => {
+                loader.load(
+                    'models/ammo.glb',
+                    resolve,
+                    undefined,
+                    reject
+                );
+            });
+            
+            this.ammoModel = gltf.scene.clone();
+            this.ammoModelLoaded = true;
+            console.log('🔫 Ammo model loaded successfully for remote players');
+        } catch (error) {
+            console.warn('⚠️ Could not load ammo GLB model for remote players, using fallback:', error);
+            this.createFallbackAmmoModel();
+            this.ammoModelLoaded = true;
+        }
+    }
+
+    createFallbackAmmoModel() {
+        // Create simple bullet shape as fallback
+        const bulletGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.2);
+        const bulletMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffff00,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        this.ammoModel = new THREE.Mesh(bulletGeometry, bulletMaterial);
+        this.ammoModelLoaded = true;
+        console.log('🔫 Created fallback ammo model for remote players');
     }
 
     connect() {
@@ -148,14 +208,19 @@ export class NetworkManager {
 
 // Other player representation in the game world
 export class RemotePlayer {
-    constructor(scene, playerData) {
+    constructor(scene, playerData, networkManager = null) {
         this.id = playerData.id;
         this.scene = scene;
         this.loader = new GLTFLoader();
         this.weapon = null;
         this.activeBullets = [];
+        this.networkManager = networkManager; // Store reference to NetworkManager
+        this.ammoModel = null; // Will be set when available
         
         console.log('🔧 Creating RemotePlayer with data:', playerData);
+        
+        // Initialize ammo model asynchronously
+        this.initializeAmmoModel();
         
         // Create visual representation
         try {
@@ -187,6 +252,16 @@ export class RemotePlayer {
         this.isMoving = playerData.isMoving || false;
         this.isCrouching = playerData.isCrouching || false;
         this.isRunning = playerData.isRunning || false;
+    }
+
+    async initializeAmmoModel() {
+        if (this.networkManager) {
+            console.log('🔫 Waiting for ammo model for remote player:', this.id);
+            this.ammoModel = await this.networkManager.getAmmoModel();
+            console.log('🔫 Ammo model ready for remote player:', this.id, this.ammoModel ? 'loaded' : 'fallback');
+        } else {
+            console.warn('⚠️ No NetworkManager reference, cannot get ammo model for:', this.id);
+        }
     }
 
     createPlayerMesh() {
@@ -302,69 +377,155 @@ export class RemotePlayer {
     }
 
     // Create bullet trail for remote player
-    createBulletTrail(startPos, direction) {
-        const bulletGeometry = new THREE.SphereGeometry(0.02, 4, 4);
-        const bulletMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0xffff00,
-            transparent: true,
-            opacity: 0.8
-        });
+    async createBulletTrail(startPos, direction) {
+        console.log('🎨 Creating bullet trail for remote player:', this.id);
         
-        const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+        // Ensure ammo model is available
+        if (!this.ammoModel && this.networkManager) {
+            console.log('🔫 Waiting for ammo model to be ready for bullet trail...');
+            this.ammoModel = await this.networkManager.getAmmoModel();
+        }
+        
+        let bullet;
+        
+        if (this.ammoModel) {
+            // Use the shared ammo.glb model (same as local player)
+            bullet = this.ammoModel.clone();
+            
+            // Scale the ammo model appropriately for bullet size
+            bullet.scale.set(5, 5, 5);
+            
+            // Ensure materials are visible and mark as bullet
+            bullet.traverse((child) => {
+                if (child.isMesh) {
+                    if (child.material) {
+                        child.material = child.material.clone(); // Clone material to avoid affecting original
+                        child.material.transparent = true;
+                        child.material.opacity = 0.9;
+                    }
+                    child.userData.isBullet = true;
+                }
+            });
+            
+            console.log('✅ Using ammo.glb model for remote player bullet');
+        } else {
+            // Fallback to simple geometry if ammo model is not available
+            const bulletGeometry = new THREE.CylinderGeometry(0.01, 0.01, 0.2);
+            const bulletMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0xffff00,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+            bullet.userData.isBullet = true;
+            console.log('⚠️ Using fallback geometry for remote player bullet');
+        }
+        
+        // Position bullet at start position
         bullet.position.copy(startPos);
         
-        // Add trail effect
-        const trailGeometry = new THREE.CylinderGeometry(0.005, 0.02, 0.5, 4);
-        const trailMaterial = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.6
-        });
-        const trail = new THREE.Mesh(trailGeometry, trailMaterial);
-        trail.position.set(0, -0.25, 0);
-        bullet.add(trail);
+        // Orient bullet in direction of travel
+        if (this.ammoModel) {
+            // For 3D models, use the same orientation logic as local player
+            const axis = new THREE.Vector3(0, 1, 0);
+            bullet.quaternion.setFromUnitVectors(axis, direction);
+        } else {
+            // For simple cylinder, orient along direction
+            const axis = new THREE.Vector3(0, 1, 0);
+            bullet.quaternion.setFromUnitVectors(axis, direction);
+        }
         
         this.scene.add(bullet);
+        console.log('✅ Remote player bullet added to scene at:', bullet.position);
         
-        // Animate bullet
-        const speed = 50;
-        const velocity = direction.clone().multiplyScalar(speed);
-        let time = 0;
-        const maxTime = 2; // 2 seconds max
+        // Create bullet object with properties (same as local player)
+        const bulletObj = {
+            mesh: bullet,
+            velocity: direction.clone().multiplyScalar(40), // Bullet speed
+            life: 3.0, // Bullet lifetime
+            startTime: performance.now()
+        };
         
-        const animateBullet = () => {
-            time += 0.016;
+        this.activeBullets.push(bulletObj);
+        
+        // Animate bullet with physics-based movement
+        this.animateBullet(bulletObj);
+        
+        return bulletObj;
+    }
+    
+    // Animate bullet with same logic as local player
+    animateBullet(bulletObj) {
+        const animate = () => {
+            const deltaTime = 0.016; // Approximate 60 FPS
             
-            if (time > maxTime) {
-                this.scene.remove(bullet);
-                bullet.geometry.dispose();
-                bullet.material.dispose();
-                trail.geometry.dispose();
-                trail.material.dispose();
+            // Update position
+            bulletObj.mesh.position.add(bulletObj.velocity.clone().multiplyScalar(deltaTime));
+            
+            // Add bullet rotation for visual effect (same as local player)
+            bulletObj.mesh.rotation.y += deltaTime * 15; // Y-axis spinning
+            
+            // Update lifetime
+            bulletObj.life -= deltaTime;
+            
+            // Fade out bullet over time
+            const lifeFactor = bulletObj.life / 3.0;
+            
+            // Handle material opacity for both simple mesh and complex models
+            if (this.ammoModel) {
+                bulletObj.mesh.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        child.material.opacity = lifeFactor * 0.9;
+                    }
+                });
+            } else {
+                bulletObj.mesh.material.opacity = lifeFactor * 0.8;
+            }
+            
+            // Remove expired bullets
+            if (bulletObj.life <= 0) {
+                this.scene.remove(bulletObj.mesh);
+                
+                // Clean up geometry and materials
+                if (bulletObj.mesh.geometry) {
+                    bulletObj.mesh.geometry.dispose();
+                }
+                if (bulletObj.mesh.material) {
+                    if (Array.isArray(bulletObj.mesh.material)) {
+                        bulletObj.mesh.material.forEach(mat => mat.dispose());
+                    } else {
+                        bulletObj.mesh.material.dispose();
+                    }
+                }
+                
+                // Remove from active bullets array
+                const index = this.activeBullets.indexOf(bulletObj);
+                if (index > -1) {
+                    this.activeBullets.splice(index, 1);
+                }
+                
+                console.log('🗑️ Remote player bullet cleaned up');
                 return;
             }
             
-            bullet.position.add(velocity.clone().multiplyScalar(0.016));
-            bullet.lookAt(bullet.position.clone().add(velocity));
-            
-            // Fade out over time
-            const fadeProgress = time / maxTime;
-            bullet.material.opacity = Math.max(0, 0.8 * (1 - fadeProgress));
-            trail.material.opacity = Math.max(0, 0.6 * (1 - fadeProgress));
-            
-            requestAnimationFrame(animateBullet);
+            requestAnimationFrame(animate);
         };
         
-        animateBullet();
+        animate();
     }
 
     // Handle shooting event from this remote player
-    onShoot(shootData) {
+    async onShoot(shootData) {
         console.log('💥 Remote player', this.id, 'shot!');
+        console.log('🎯 Shoot data:', shootData);
         
         // Create muzzle flash effect
         if (this.weapon) {
+            console.log('✨ Creating muzzle flash for remote player');
             this.createMuzzleFlash();
+        } else {
+            console.warn('⚠️ No weapon found for muzzle flash');
         }
         
         // Create bullet trail
@@ -379,7 +540,8 @@ export class RemotePlayer {
             shootData.direction.z
         ).normalize();
         
-        this.createBulletTrail(startPos, direction);
+        console.log('🚀 Creating bullet trail from:', startPos, 'direction:', direction);
+        await this.createBulletTrail(startPos, direction);
     }
 
     createMuzzleFlash() {

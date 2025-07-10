@@ -151,7 +151,7 @@ window.remotePlayers = remotePlayers;
 networkManager.onPlayerJoined = (playerData) => {
     console.log('🎮 Creating remote player:', playerData.id);
     try {
-        const remotePlayer = new RemotePlayer(scene, playerData);
+        const remotePlayer = new RemotePlayer(scene, playerData, networkManager);
         remotePlayers.set(playerData.id, remotePlayer);
         updatePlayerCount();
         console.log('👥 Total remote players:', remotePlayers.size);
@@ -181,7 +181,7 @@ networkManager.onPlayerUpdate = (playerUpdates) => {
             // Create new remote player if not exists
             console.log('🆕 Creating new remote player from update:', playerId);
             try {
-                const newRemotePlayer = new RemotePlayer(scene, playerData);
+                const newRemotePlayer = new RemotePlayer(scene, playerData, networkManager);
                 remotePlayers.set(playerId, newRemotePlayer);
                 updatePlayerCount();
             } catch (error) {
@@ -193,20 +193,27 @@ networkManager.onPlayerUpdate = (playerUpdates) => {
 
 networkManager.onPlayerShot = (shotData) => {
     console.log('🔫 Player shot event received:', shotData);
+    console.log('📍 Shot position:', shotData.position);
+    console.log('🎯 Shot direction:', shotData.direction);
+    console.log('👥 Current remote players:', remotePlayers.size);
     
     // Find the remote player who shot
     const remotePlayer = remotePlayers.get(shotData.playerId);
     if (remotePlayer) {
+        console.log('✅ Found remote player for shot, calling onShoot');
         remotePlayer.onShoot(shotData);
     } else {
         // If remote player not found, just create a basic effect
         console.warn('⚠️ Shot from unknown player:', shotData.playerId);
+        console.log('🔍 Available player IDs:', Array.from(remotePlayers.keys()));
         createGenericShotEffect(shotData);
     }
 };
 
 // Create a generic shot effect if we don't have the remote player
 function createGenericShotEffect(shotData) {
+    console.log('🎨 Creating generic shot effect');
+    
     const startPos = new THREE.Vector3(
         shotData.position.x,
         shotData.position.y,
@@ -218,23 +225,39 @@ function createGenericShotEffect(shotData) {
         shotData.direction.z
     ).normalize();
     
-    // Create a simple bullet trail
-    const bulletGeometry = new THREE.SphereGeometry(0.02, 4, 4);
+    console.log('📍 Generic bullet start pos:', startPos);
+    console.log('🎯 Generic bullet direction:', direction);
+    
+    // Create a more visible bullet trail
+    const bulletGeometry = new THREE.SphereGeometry(0.05, 6, 6); // Bigger bullet
     const bulletMaterial = new THREE.MeshBasicMaterial({ 
-        color: 0xff6b6b,
+        color: 0xff0000, // Red color to make it stand out
         transparent: true,
-        opacity: 0.8
+        opacity: 1.0
     });
     
     const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
     bullet.position.copy(startPos);
+    
+    // Add a bright trail
+    const trailGeometry = new THREE.CylinderGeometry(0.01, 0.03, 1.0, 6);
+    const trailMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffff00, // Yellow trail
+        transparent: true,
+        opacity: 0.8
+    });
+    const trail = new THREE.Mesh(trailGeometry, trailMaterial);
+    trail.position.set(0, -0.5, 0);
+    bullet.add(trail);
+    
     scene.add(bullet);
+    console.log('✅ Generic bullet added to scene');
     
     // Animate bullet
-    const speed = 50;
+    const speed = 30; // Slower for visibility
     const velocity = direction.clone().multiplyScalar(speed);
     let time = 0;
-    const maxTime = 2;
+    const maxTime = 3; // Longer lifetime
     
     const animateBullet = () => {
         time += 0.016;
@@ -243,11 +266,19 @@ function createGenericShotEffect(shotData) {
             scene.remove(bullet);
             bullet.geometry.dispose();
             bullet.material.dispose();
+            trail.geometry.dispose();
+            trail.material.dispose();
+            console.log('🗑️ Generic bullet cleaned up');
             return;
         }
         
         bullet.position.add(velocity.clone().multiplyScalar(0.016));
-        bullet.material.opacity = Math.max(0, 0.8 * (1 - time / maxTime));
+        bullet.lookAt(bullet.position.clone().add(velocity));
+        
+        // Fade out over time
+        const fadeProgress = time / maxTime;
+        bullet.material.opacity = Math.max(0, 1.0 * (1 - fadeProgress));
+        trail.material.opacity = Math.max(0, 0.8 * (1 - fadeProgress));
         
         requestAnimationFrame(animateBullet);
     };
@@ -634,3 +665,54 @@ function animate() {
 }
 
 animate();
+
+// Debug function to test bullet trails
+window.testBulletTrail = function() {
+    console.log('🧪 Testing bullet trail...');
+    
+    // Create a test bullet from camera position
+    const startPos = window.gamePlayer.camera.position.clone();
+    startPos.y += 0.2; // Slightly above camera
+    
+    const direction = new THREE.Vector3();
+    window.gamePlayer.camera.getWorldDirection(direction);
+    
+    console.log('Test bullet from:', startPos, 'direction:', direction);
+    
+    // Create test bullet
+    const bulletGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+    const bulletMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xff00ff, // Magenta test bullet
+        transparent: true,
+        opacity: 1.0
+    });
+    
+    const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+    bullet.position.copy(startPos);
+    scene.add(bullet);
+    
+    // Animate test bullet
+    const speed = 20;
+    const velocity = direction.clone().multiplyScalar(speed);
+    let time = 0;
+    const maxTime = 5;
+    
+    const animateTestBullet = () => {
+        time += 0.016;
+        
+        if (time > maxTime) {
+            scene.remove(bullet);
+            bullet.geometry.dispose();
+            bullet.material.dispose();
+            console.log('🗑️ Test bullet cleaned up');
+            return;
+        }
+        
+        bullet.position.add(velocity.clone().multiplyScalar(0.016));
+        console.log('Test bullet position:', bullet.position);
+        
+        requestAnimationFrame(animateTestBullet);
+    };
+    
+    animateTestBullet();
+};
