@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Client-side networking for multiplayer
 export class NetworkManager {
@@ -150,12 +151,16 @@ export class RemotePlayer {
     constructor(scene, playerData) {
         this.id = playerData.id;
         this.scene = scene;
+        this.loader = new GLTFLoader();
+        this.weapon = null;
+        this.activeBullets = [];
         
         console.log('🔧 Creating RemotePlayer with data:', playerData);
         
         // Create visual representation
         try {
             this.createPlayerMesh();
+            this.loadWeaponModel();
             console.log('✅ RemotePlayer mesh created successfully for:', this.id);
         } catch (error) {
             console.error('❌ Error creating RemotePlayer mesh:', error);
@@ -245,6 +250,178 @@ export class RemotePlayer {
         this.mesh.add(this.nameTag);
     }
 
+    // Load weapon model for remote player
+    async loadWeaponModel() {
+        try {
+            const gltf = await this.loader.loadAsync('models/ak47.glb');
+            this.weapon = gltf.scene;
+            
+            // Scale and position the weapon
+            this.weapon.scale.set(0.8, 0.8, 0.8);
+            this.weapon.position.set(0.3, 0.2, 0.4);
+            this.weapon.rotation.set(0, Math.PI / 2, 0);
+            
+            // Attach weapon to player
+            if (this.mesh) {
+                this.mesh.add(this.weapon);
+                console.log('🔫 Weapon loaded for remote player:', this.id);
+            }
+        } catch (error) {
+            console.warn('⚠️ Could not load weapon for remote player:', error);
+            // Create a simple weapon placeholder
+            this.createSimpleWeapon();
+        }
+    }
+
+    createSimpleWeapon() {
+        // Create a simple weapon representation if model fails to load
+        const weaponGroup = new THREE.Group();
+        
+        // Main body
+        const bodyGeometry = new THREE.BoxGeometry(0.8, 0.1, 0.1);
+        const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x444444 });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        weaponGroup.add(body);
+        
+        // Barrel
+        const barrelGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8);
+        const barrelMaterial = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
+        barrel.rotation.z = Math.PI / 2;
+        barrel.position.set(0.4, 0, 0);
+        weaponGroup.add(barrel);
+        
+        // Position the weapon
+        weaponGroup.position.set(0.3, 0.2, 0.4);
+        weaponGroup.rotation.set(0, Math.PI / 2, 0);
+        
+        this.weapon = weaponGroup;
+        if (this.mesh) {
+            this.mesh.add(this.weapon);
+        }
+    }
+
+    // Create bullet trail for remote player
+    createBulletTrail(startPos, direction) {
+        const bulletGeometry = new THREE.SphereGeometry(0.02, 4, 4);
+        const bulletMaterial = new THREE.MeshBasicMaterial({ 
+            color: 0xffff00,
+            transparent: true,
+            opacity: 0.8
+        });
+        
+        const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+        bullet.position.copy(startPos);
+        
+        // Add trail effect
+        const trailGeometry = new THREE.CylinderGeometry(0.005, 0.02, 0.5, 4);
+        const trailMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.6
+        });
+        const trail = new THREE.Mesh(trailGeometry, trailMaterial);
+        trail.position.set(0, -0.25, 0);
+        bullet.add(trail);
+        
+        this.scene.add(bullet);
+        
+        // Animate bullet
+        const speed = 50;
+        const velocity = direction.clone().multiplyScalar(speed);
+        let time = 0;
+        const maxTime = 2; // 2 seconds max
+        
+        const animateBullet = () => {
+            time += 0.016;
+            
+            if (time > maxTime) {
+                this.scene.remove(bullet);
+                bullet.geometry.dispose();
+                bullet.material.dispose();
+                trail.geometry.dispose();
+                trail.material.dispose();
+                return;
+            }
+            
+            bullet.position.add(velocity.clone().multiplyScalar(0.016));
+            bullet.lookAt(bullet.position.clone().add(velocity));
+            
+            // Fade out over time
+            const fadeProgress = time / maxTime;
+            bullet.material.opacity = Math.max(0, 0.8 * (1 - fadeProgress));
+            trail.material.opacity = Math.max(0, 0.6 * (1 - fadeProgress));
+            
+            requestAnimationFrame(animateBullet);
+        };
+        
+        animateBullet();
+    }
+
+    // Handle shooting event from this remote player
+    onShoot(shootData) {
+        console.log('💥 Remote player', this.id, 'shot!');
+        
+        // Create muzzle flash effect
+        if (this.weapon) {
+            this.createMuzzleFlash();
+        }
+        
+        // Create bullet trail
+        const startPos = new THREE.Vector3(
+            shootData.position.x,
+            shootData.position.y,
+            shootData.position.z
+        );
+        const direction = new THREE.Vector3(
+            shootData.direction.x,
+            shootData.direction.y,
+            shootData.direction.z
+        ).normalize();
+        
+        this.createBulletTrail(startPos, direction);
+    }
+
+    createMuzzleFlash() {
+        if (!this.weapon) return;
+        
+        // Create muzzle flash effect
+        const flashGeometry = new THREE.PlaneGeometry(0.3, 0.3);
+        const flashMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffff00,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        
+        const flash = new THREE.Mesh(flashGeometry, flashMaterial);
+        flash.position.set(0.5, 0, 0); // Position at weapon muzzle
+        
+        this.weapon.add(flash);
+        
+        // Animate flash
+        let flashTime = 0;
+        const flashDuration = 0.1;
+        
+        const animateFlash = () => {
+            flashTime += 0.016;
+            
+            if (flashTime > flashDuration) {
+                this.weapon.remove(flash);
+                flash.geometry.dispose();
+                flash.material.dispose();
+                return;
+            }
+            
+            flash.material.opacity = Math.max(0, 0.8 * (1 - flashTime / flashDuration));
+            flash.rotation.z = Math.random() * Math.PI * 2;
+            
+            requestAnimationFrame(animateFlash);
+        };
+        
+        animateFlash();
+    }
+
     updateFromNetwork(playerData) {
         // Update target position and rotation for interpolation
         this.targetPosition.set(
@@ -289,6 +466,16 @@ export class RemotePlayer {
             deltaTime * 10
         );
         
+        // Update weapon rotation to match player looking direction
+        if (this.weapon) {
+            // Make weapon follow player's pitch (up/down look)
+            this.weapon.rotation.x = THREE.MathUtils.lerp(
+                this.weapon.rotation.x,
+                this.targetRotation.x * 0.5, // Dampen the pitch movement
+                deltaTime * 8
+            );
+        }
+        
         // Make name tag always face the camera
         if (this.nameTag && window.gamePlayer && window.gamePlayer.camera) {
             this.nameTag.lookAt(window.gamePlayer.camera.position);
@@ -298,6 +485,21 @@ export class RemotePlayer {
     destroy() {
         if (this.mesh) {
             this.scene.remove(this.mesh);
+            
+            // Clean up weapon
+            if (this.weapon) {
+                this.weapon.traverse((child) => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(material => material.dispose());
+                        } else {
+                            child.material.dispose();
+                        }
+                    }
+                });
+            }
+            
             this.mesh = null;
         }
     }

@@ -192,11 +192,68 @@ networkManager.onPlayerUpdate = (playerUpdates) => {
 };
 
 networkManager.onPlayerShot = (shotData) => {
-    // Create visual effect for other player's shot
-    if (weapon) {
-        weapon.createMuzzleFlash(shotData.position, shotData.direction);
+    console.log('🔫 Player shot event received:', shotData);
+    
+    // Find the remote player who shot
+    const remotePlayer = remotePlayers.get(shotData.playerId);
+    if (remotePlayer) {
+        remotePlayer.onShoot(shotData);
+    } else {
+        // If remote player not found, just create a basic effect
+        console.warn('⚠️ Shot from unknown player:', shotData.playerId);
+        createGenericShotEffect(shotData);
     }
 };
+
+// Create a generic shot effect if we don't have the remote player
+function createGenericShotEffect(shotData) {
+    const startPos = new THREE.Vector3(
+        shotData.position.x,
+        shotData.position.y,
+        shotData.position.z
+    );
+    const direction = new THREE.Vector3(
+        shotData.direction.x,
+        shotData.direction.y,
+        shotData.direction.z
+    ).normalize();
+    
+    // Create a simple bullet trail
+    const bulletGeometry = new THREE.SphereGeometry(0.02, 4, 4);
+    const bulletMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xff6b6b,
+        transparent: true,
+        opacity: 0.8
+    });
+    
+    const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+    bullet.position.copy(startPos);
+    scene.add(bullet);
+    
+    // Animate bullet
+    const speed = 50;
+    const velocity = direction.clone().multiplyScalar(speed);
+    let time = 0;
+    const maxTime = 2;
+    
+    const animateBullet = () => {
+        time += 0.016;
+        
+        if (time > maxTime) {
+            scene.remove(bullet);
+            bullet.geometry.dispose();
+            bullet.material.dispose();
+            return;
+        }
+        
+        bullet.position.add(velocity.clone().multiplyScalar(0.016));
+        bullet.material.opacity = Math.max(0, 0.8 * (1 - time / maxTime));
+        
+        requestAnimationFrame(animateBullet);
+    };
+    
+    animateBullet();
+}
 
 networkManager.onTargetDestroyed = (destroyData) => {
     // Handle target destruction from other players

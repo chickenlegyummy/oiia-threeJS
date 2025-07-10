@@ -113,6 +113,8 @@ io.on('connection', (socket) => {
 
     // Handle shooting
     socket.on('playerShoot', (shootData) => {
+        console.log(`Player ${socket.id} shot at:`, shootData.position);
+        
         // Broadcast shooting event to all other players
         socket.broadcast.emit('playerShot', {
             playerId: socket.id,
