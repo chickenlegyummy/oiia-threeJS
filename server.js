@@ -86,7 +86,7 @@ function spawnInitialTargets() {
     console.log(`🎯 Total targets created: ${gameState.targets.size}`);
 }
 
-function spawnRandomTarget() {
+function spawnNewTarget() {
     const x = (Math.random() - 0.5) * 40;
     const y = 1 + Math.random() * 4;
     const z = -15 - Math.random() * 25;
@@ -98,10 +98,15 @@ function spawnRandomTarget() {
 
     gameState.targets.set(target.id.toString(), target);
     
+    console.log(`🎯 SERVER: Spawning new target ${target.id} at position (${x}, ${y}, ${z})`);
+    console.log(`🎯 SERVER: Target data to send:`, target.toNetworkData());
+    console.log(`🎯 SERVER: Total connected clients:`, io.engine.clientsCount);
+    console.log(`🎯 SERVER: Total targets after spawn:`, gameState.targets.size);
+    
     // Broadcast new target to all clients
     io.emit('targetSpawned', target.toNetworkData());
     
-    console.log(`Spawned new target ${target.id} at position (${x}, ${y}, ${z})`);
+    console.log(`🎯 SERVER: targetSpawned event emitted to all clients`);
 }
 
 // Game constants
@@ -266,7 +271,7 @@ io.on('connection', (socket) => {
 
             // Spawn a new target after a delay
             setTimeout(() => {
-                spawnRandomTarget();
+                spawnNewTarget();
             }, 2000 + Math.random() * 3000);
 
         } else {
@@ -296,6 +301,13 @@ io.on('connection', (socket) => {
     // Handle debug info from clients
     socket.on('debugInfo', (debugData) => {
         console.log(`🔧 DEBUG from player ${socket.id}: ${debugData.message}`);
+    });
+    
+    // Handle manual target spawn requests for debugging
+    socket.on('debugSpawnTarget', (data) => {
+        console.log(`🔧 DEBUG: Manual target spawn requested by player ${socket.id}`);
+        spawnNewTarget();
+        console.log(`🔧 DEBUG: Manual target spawned. Total targets: ${gameState.targets.size}`);
     });
 });
 

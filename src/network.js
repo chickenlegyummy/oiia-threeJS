@@ -186,8 +186,15 @@ export class NetworkManager {
 
         // Handle new target spawning
         this.socket.on('targetSpawned', (targetData) => {
+            console.log('🌐 NETWORK: Received targetSpawned event:', targetData);
+            console.log('🌐 NETWORK: onTargetSpawned handler exists:', !!this.onTargetSpawned);
+            
             if (this.onTargetSpawned) {
+                console.log('🌐 NETWORK: Calling onTargetSpawned handler...');
                 this.onTargetSpawned(targetData);
+                console.log('🌐 NETWORK: onTargetSpawned handler called');
+            } else {
+                console.error('❌ NETWORK: No onTargetSpawned handler registered!');
             }
         });
     }
@@ -680,11 +687,15 @@ export class RemotePlayer {
     }
 
     destroy() {
+        console.log('🧹 Destroying remote player:', this.playerId);
+        
         if (this.mesh) {
+            console.log('🧹 Removing player mesh from scene');
             this.scene.remove(this.mesh);
             
             // Clean up weapon
             if (this.weapon) {
+                console.log('🧹 Cleaning up player weapon');
                 this.weapon.traverse((child) => {
                     if (child.geometry) child.geometry.dispose();
                     if (child.material) {
@@ -695,9 +706,27 @@ export class RemotePlayer {
                         }
                     }
                 });
+                this.scene.remove(this.weapon);
             }
             
+            // Clean up the main mesh geometry and materials
+            this.mesh.traverse((child) => {
+                if (child.geometry) {
+                    child.geometry.dispose();
+                }
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(material => material.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            });
+            
             this.mesh = null;
+            console.log('🧹 Remote player cleanup complete');
+        } else {
+            console.log('🧹 No mesh to clean up for remote player');
         }
     }
 }

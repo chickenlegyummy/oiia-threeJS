@@ -409,16 +409,6 @@ export class Weapon {
             }
         });
         
-        // Also try click event as backup
-        document.addEventListener('click', (event) => {
-            console.log('🖱️ Click event detected, pointer locked:', !!document.pointerLockElement);
-            if (document.pointerLockElement) {
-                console.log('🔫 Click while pointer locked - firing shot...');
-                this.startShooting();
-                setTimeout(() => this.stopShooting(), 100); // Auto-release after 100ms
-            }
-        });
-        
         // Reload key (R)
         document.addEventListener('keydown', (event) => {
             if (event.code === 'KeyR') {

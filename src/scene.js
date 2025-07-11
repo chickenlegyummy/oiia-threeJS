@@ -161,13 +161,22 @@ networkManager.onPlayerJoined = (playerData) => {
 };
 
 networkManager.onPlayerLeft = (playerId) => {
-    console.log('🚪 Removing remote player:', playerId);
+    console.log('🚪 Player left event received for player:', playerId);
+    console.log('🚪 Current remote players before removal:', Array.from(remotePlayers.keys()));
+    console.log('🚪 Player exists in map:', remotePlayers.has(playerId));
+    
     const remotePlayer = remotePlayers.get(playerId);
     if (remotePlayer) {
+        console.log('🚪 Destroying remote player:', playerId);
         remotePlayer.destroy();
         remotePlayers.delete(playerId);
+        console.log('🚪 Remote player destroyed and removed from map');
+    } else {
+        console.warn('🚪 Player not found in remote players map:', playerId);
     }
+    
     updatePlayerCount();
+    console.log('🚪 Remaining remote players after removal:', Array.from(remotePlayers.keys()));
     console.log('👥 Total remote players:', remotePlayers.size);
 };
 
@@ -354,36 +363,148 @@ networkManager.onTargetDestroyed = (destroyData) => {
 };
 
 networkManager.onTargetSpawned = (targetData) => {
-    // Handle new target spawning from server
-    if (targetManager) {
-        console.log(`Server spawned new target ${targetData.id} at position (${targetData.position.x}, ${targetData.position.y}, ${targetData.position.z})`);
+    console.log('🎯 TARGET SPAWN EVENT RECEIVED:', targetData);
+    
+    // Comprehensive debugging of the spawn event
+    console.log('🎯 Target data details:', {
+        id: targetData.id,
+        position: targetData.position,
+        scale: targetData.scale,
+        health: targetData.health,
+        maxHealth: targetData.maxHealth,
+        points: targetData.points,
+        rotation: targetData.rotation,
+        isAlive: targetData.isAlive
+    });
+    
+    // Check system readiness
+    console.log('🎯 System status check:');
+    console.log('  - targetManager exists:', !!targetManager);
+    console.log('  - targetManager.isModelLoaded:', targetManager?.isModelLoaded);
+    console.log('  - targetManager.targets.length before:', targetManager?.targets?.length || 'N/A');
+    console.log('  - scene exists:', !!scene);
+    console.log('  - scene.children.length:', scene?.children?.length || 'N/A');
+    
+    if (!targetManager) {
+        console.error('❌ Target manager not available for new target spawn');
+        return;
+    }
+    
+    if (!targetManager.isModelLoaded) {
+        console.error('❌ Target model not loaded yet - cannot create new target');
+        console.log('❌ TargetManager model loaded state:', targetManager.isModelLoaded);
+        console.log('❌ TargetModel exists:', !!targetManager.targetModel);
+        
+        // Retry after model loads
+        const retrySpawn = () => {
+            if (targetManager.isModelLoaded) {
+                console.log('🎯 Model loaded! Retrying target spawn...');
+                networkManager.onTargetSpawned(targetData);
+            } else {
+                console.log('🎯 Model still not loaded, retrying in 500ms...');
+                setTimeout(retrySpawn, 500);
+            }
+        };
+        setTimeout(retrySpawn, 200);
+        return;
+    }
+    
+    try {
+        console.log(`🎯 Creating new target ${targetData.id} at position (${targetData.position.x}, ${targetData.position.y}, ${targetData.position.z})`);
         
         // Create target from server data
         const position = new THREE.Vector3(targetData.position.x, targetData.position.y, targetData.position.z);
+        
+        // Prepare rotation if provided
+        let rotation = undefined;
+        if (targetData.rotation) {
+            rotation = new THREE.Euler(targetData.rotation.x || 0, targetData.rotation.y || 0, targetData.rotation.z || 0, 'XYZ');
+        }
+        
+        console.log('🎯 Calling targetManager.createTarget with:', {
+            position: position,
+            options: {
+                scale: targetData.scale || 5,
+                health: targetData.health,
+                points: targetData.points,
+                rotation: rotation,
+                targetId: targetData.id
+            }
+        });
+        
         const target = targetManager.createTarget(position, {
             scale: targetData.scale || 5,
             health: targetData.health,
             points: targetData.points,
-            rotation: targetData.rotation,
+            rotation: rotation,
             targetId: targetData.id // Pass the server ID
         });
+        
+        console.log('🎯 createTarget returned:', target);
+        console.log('🎯 targetManager.targets.length after:', targetManager.targets.length);
         
         if (target) {
             // Ensure target ID is set correctly
             target.userData.targetId = targetData.id.toString();
             target.userData.health = targetData.health;
-            target.userData.maxHealth = targetData.maxHealth;
+            target.userData.maxHealth = targetData.maxHealth || targetData.health;
             target.userData.points = targetData.points;
-            console.log(`Created target ${targetData.id} with server data`);
+            
+            console.log('✅ New target created successfully:', {
+                targetId: target.userData.targetId,
+                position: target.position,
+                visible: target.visible,
+                inScene: !!target.parent,
+                sceneChildren: scene.children.length
+            });
+            
+            // Force add to scene if not already there
+            if (!target.parent) {
+                console.log('🔧 Target not in scene, force adding...');
+                scene.add(target);
+                console.log('🔧 Target force-added to scene');
+            }
             
             // Ensure weapon system scans for the new target
             setTimeout(() => {
                 if (window.weapon && window.weapon.scanForNewTargets) {
-                    window.weapon.scanForNewTargets();
-                    console.log('🎯 Rescanned targets after new target spawn');
+                    console.log('🎯 Rescanning targets after new target spawn...');
+                    const scanResult = window.weapon.scanForNewTargets();
+                    console.log('🎯 Rescan result:', scanResult);
+                    console.log('🎯 Weapon colliders after scan:', window.weapon.targetColliders.size);
+                } else {
+                    console.warn('⚠️ Weapon system not available for scanning');
                 }
             }, 100);
+            
+            // Additional verification after a delay
+            setTimeout(() => {
+                console.log('🔍 Post-spawn verification for target', targetData.id);
+                console.log('  - Target still in targetManager:', targetManager.targets.includes(target));
+                console.log('  - Target still in scene:', !!target.parent);
+                console.log('  - Target visible:', target.visible);
+                console.log('  - Target position:', target.position);
+                console.log('  - Total targets in manager:', targetManager.targets.length);
+                console.log('  - Scene children count:', scene.children.length);
+            }, 1000);
+            
+        } else {
+            console.error('❌ Failed to create target from spawn data:', targetData);
+            console.error('❌ targetManager.createTarget returned null/undefined');
+            
+            // Additional debugging
+            console.log('🔍 Debugging createTarget failure:');
+            console.log('  - targetManager exists:', !!targetManager);
+            console.log('  - position valid:', position && position.isVector3);
+            console.log('  - targetManager.model exists:', !!targetManager.model);
+            console.log('  - targetManager.scene exists:', !!targetManager.scene);
+            console.log('  - targetManager.targetModel exists:', !!targetManager.targetModel);
         }
+        
+    } catch (error) {
+        console.error('❌ Exception during target spawn:', error);
+        console.error('❌ Error stack:', error.stack);
+        console.error('❌ Failed to create target from data:', targetData);
     }
 };
 
@@ -560,12 +681,15 @@ function processGameState() {
 networkManager.onConnectionChange = (connected) => {
     updateConnectionStatus(connected);
     if (!connected) {
+        console.log('🔌 Connection lost - clearing all remote players');
         // Clear remote players when disconnected
-        remotePlayers.forEach(remotePlayer => {
+        remotePlayers.forEach((remotePlayer, playerId) => {
+            console.log('🧹 Cleaning up remote player on disconnect:', playerId);
             remotePlayer.destroy();
         });
         remotePlayers.clear();
         updatePlayerCount();
+        console.log('🧹 All remote players cleared due to disconnection');
     }
 };
 
@@ -1223,4 +1347,47 @@ window.testTargetCreation = () => {
     } else {
         console.log('❌ Target manager not available');
     }
+};
+
+window.debugSpawnTarget = () => {
+    console.log('🔧 Requesting manual target spawn from server...');
+    if (networkManager && networkManager.socket) {
+        networkManager.socket.emit('debugSpawnTarget', {});
+        console.log('🔧 Target spawn request sent to server');
+    } else {
+        console.log('❌ Network manager not available');
+    }
+};
+
+// Debug function to check current target status
+window.debugTargetStatus = () => {
+    console.log('=== COMPLETE TARGET STATUS ===');
+    console.log('🎯 Client-side targets:');
+    
+    if (targetManager && targetManager.targets) {
+        console.log(`  - Target manager targets: ${targetManager.targets.length}`);
+        targetManager.targets.forEach((target, index) => {
+            console.log(`    Target ${index}: ID=${target.userData.targetId}, pos=${target.position.x.toFixed(1)},${target.position.y.toFixed(1)},${target.position.z.toFixed(1)}, health=${target.userData.health}`);
+        });
+    } else {
+        console.log('  - No target manager or targets');
+    }
+    
+    console.log('🔫 Weapon system:');
+    if (window.weapon) {
+        console.log(`  - Target colliders: ${window.weapon.targetColliders?.size || 0}`);
+        if (window.weapon.targetColliders) {
+            window.weapon.targetColliders.forEach((collider, target) => {
+                console.log(`    Collider for: ${target.userData.targetId}`);
+            });
+        }
+    } else {
+        console.log('  - No weapon system');
+    }
+    
+    console.log('🌐 Network:');
+    console.log(`  - Connected: ${networkManager?.isConnected || false}`);
+    console.log(`  - Player ID: ${networkManager?.playerId || 'N/A'}`);
+    
+    console.log('=== END TARGET STATUS ===');
 };
