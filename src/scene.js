@@ -538,16 +538,10 @@ function processGameState() {
                 }
             }, 2000);
             
-            // Add debug mode activation after targets are created
-            setTimeout(() => {
-                console.log('🔧 Activating debug mode to visualize colliders...');
-                if (window.weaponDebug) {
-                    window.weaponDebug();
-                    console.log('🔧 Debug mode activated');
-                } else {
-                    console.log('❌ weaponDebug function not available');
-                }
-            }, 2000);
+            // Debug mode available but not auto-activated
+            // Use weaponDebug() in console to toggle debug visualization if needed
+            console.log('🔧 Debug functions available: debugTargets(), forceTargetScan(), weaponDebug()');
+            console.log('🔧 Use weaponDebug() in console to toggle debug visualization');
             
         } else {
             console.log('🎯 No targets received from server - this should only happen in empty server scenarios');

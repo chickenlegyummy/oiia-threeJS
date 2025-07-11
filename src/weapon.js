@@ -814,7 +814,12 @@ export class Weapon {
 
     updateBullets(deltaTime) {
         if (this.activeBullets.length > 0) {
-            console.log(`🔄 Updating ${this.activeBullets.length} bullets`);
+            // Less frequent debug logging
+            if (!this.bulletUpdateCounter) this.bulletUpdateCounter = 0;
+            this.bulletUpdateCounter++;
+            if (this.bulletUpdateCounter % 120 === 0) { // Only log every 2 seconds at 60fps
+                console.log(`🔄 Updating ${this.activeBullets.length} bullets`);
+            }
         }
         
         for (let i = this.activeBullets.length - 1; i >= 0; i--) {
@@ -826,7 +831,10 @@ export class Weapon {
             // Update position
             bullet.mesh.position.add(bullet.velocity.clone().multiplyScalar(deltaTime));
             
-            console.log(`🔄 Bullet ${i} position:`, bullet.mesh.position);
+            // Less frequent position logging
+            if (this.bulletUpdateCounter % 120 === 0) {
+                console.log(`🔄 Bullet ${i} position:`, bullet.mesh.position);
+            }
             
             // Perform collision detection for this bullet
             const hit = this.checkBulletColliderCollision(bullet, prevPosition);
@@ -868,7 +876,12 @@ export class Weapon {
         // SIMPLIFIED INDUSTRY-STANDARD APPROACH
         // Use distance-based collision detection for reliability
         
-        console.log('🔍 Checking bullet collision (distance-based method)');
+        // Less frequent collision debug logging
+        if (!this.collisionCheckCounter) this.collisionCheckCounter = 0;
+        this.collisionCheckCounter++;
+        if (this.collisionCheckCounter % 180 === 0) { // Only log every 3 seconds at 60fps
+            console.log('🔍 Checking bullet collision (distance-based method)');
+        }
         
         // Check collision with each target using distance method
         let hit = false;
@@ -1412,8 +1425,16 @@ export class Weapon {
             if (target.parent) { // Target still exists in scene
                 // Position collider exactly at target position (no offset)
                 collider.position.copy(target.position);
-                // collider.position.y += 1.0; // Remove offset for now
+                
+                // Copy rotation safely with proper order
+                if (!collider.rotation.order) {
+                    collider.rotation.order = 'XYZ'; // Set default rotation order
+                }
+                if (!target.rotation.order) {
+                    target.rotation.order = 'XYZ'; // Ensure target has rotation order
+                }
                 collider.rotation.copy(target.rotation);
+                
                 // Don't copy scale - colliders should stay fixed size
             } else {
                 // Target was removed from scene, clean up its collider

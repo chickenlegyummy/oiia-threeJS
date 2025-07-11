@@ -123,7 +123,8 @@ export class TargetManager {
         const scale = options.scale || 1.0;
         target.scale.setScalar(scale);
         
-        // Set rotation
+        // Set rotation with proper order
+        target.rotation.order = 'XYZ'; // Set rotation order before setting rotation values
         if (options.rotation) {
             target.rotation.copy(options.rotation);
         } else {
@@ -456,7 +457,10 @@ export class TargetManager {
             const bobOffset = Math.sin(time * target.userData.bobSpeed) * target.userData.bobHeight;
             target.position.y = target.userData.initialY + bobOffset;
             
-            // Rotation animation
+            // Rotation animation - properly set with order
+            if (!target.rotation.order) {
+                target.rotation.order = 'XYZ'; // Set default rotation order
+            }
             target.rotation.y += target.userData.rotationSpeed * 0.016;
         });
     }
