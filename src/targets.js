@@ -9,6 +9,7 @@ export class TargetManager {
         this.loader = new GLTFLoader();
         this.targetModel = null;
         this.onTargetDestroyed = null; // Callback for score updates
+        this.isModelLoaded = false; // Track if the target model is ready
         
         this.init();
     }
@@ -16,7 +17,20 @@ export class TargetManager {
     async init() {
         try {
             await this.loadTargetModel();
-            this.spawnInitialTargets();
+            
+            // Don't spawn initial targets automatically in multiplayer - they come from server
+            // But spawn a few test targets if we're in development mode or server targets fail to load
+            if (!this.networkManager) {
+                // Singleplayer mode - spawn targets immediately
+                console.log('🎯 Singleplayer mode - spawning initial targets');
+                this.spawnInitialTargets();
+            } else {
+                // Multiplayer mode - DO NOT create fallback targets automatically
+                // The server will send targets via gameState and targetSpawned events
+                console.log('🎯 Multiplayer mode - waiting for server targets (NO fallback targets)');
+                console.log('🎯 Targets will be created when server sends gameState or targetSpawned events');
+            }
+            
             console.log('Target system initialized');
         } catch (error) {
             console.error('Error initializing target system:', error);
@@ -29,7 +43,8 @@ export class TargetManager {
                 'models/oiia_cat.glb',
                 (gltf) => {
                     this.targetModel = gltf.scene;
-                    console.log('Cat model loaded successfully');
+                    this.isModelLoaded = true;
+                    console.log('✅ Cat model loaded successfully - target creation now possible');
                     resolve();
                 },
                 (progress) => {
@@ -38,6 +53,8 @@ export class TargetManager {
                 (error) => {
                     console.warn('Could not load cat model, using fallback:', error);
                     this.createFallbackModel();
+                    this.isModelLoaded = true;
+                    console.log('✅ Fallback model created - target creation now possible');
                     resolve();
                 }
             );
@@ -88,9 +105,13 @@ export class TargetManager {
     
     createTarget(position = new THREE.Vector3(), options = {}) {
         if (!this.targetModel) {
-            console.warn('Target model not loaded yet');
+            console.error('❌ CRITICAL: Target model not loaded yet - this is why targets are not being created!');
+            console.error('❌ targetModel is:', this.targetModel);
+            console.error('❌ This means the target model is still loading when createTarget is called');
             return null;
         }
+        
+        console.log('✅ Target model is loaded, proceeding with target creation');
         
         // Clone the model
         const target = this.targetModel.clone();
@@ -114,7 +135,19 @@ export class TargetManager {
         target.userData.health = options.health || 100;
         target.userData.maxHealth = target.userData.health;
         target.userData.points = options.points || 10;
-        target.userData.targetId = Math.random().toString(36).substr(2, 9); // Use targetId for consistency
+        
+        // Use provided target ID or generate one for singleplayer
+        if (options.targetId) {
+            target.userData.targetId = options.targetId.toString();
+            console.log(`🎯 Target created with server ID: ${options.targetId}`);
+        } else {
+            // If no server ID is provided, this means we're in fallback mode
+            // Use numeric IDs that match server format to prevent conflicts
+            const fallbackId = Date.now().toString() + Math.floor(Math.random() * 1000);
+            target.userData.targetId = fallbackId;
+            console.log(`🎯 Target created with fallback numeric ID: ${target.userData.targetId}`);
+            console.warn(`⚠️ Creating target without server ID - this may cause sync issues`);
+        }
         
         // Animation properties
         target.userData.bobSpeed = 0.5 + Math.random() * 1.0;
@@ -133,41 +166,62 @@ export class TargetManager {
                     child.material = child.material.clone();
                     child.userData.originalColor = child.material.color.clone();
                     child.userData.originalEmissive = child.material.emissive ? child.material.emissive.clone() : new THREE.Color(0x000000);
+                    child.userData.originalOpacity = child.material.opacity || 1.0; // Store original opacity
                 }
             }
         });
         
-        // Set up hit behavior
-        target.userData.onHit = (hitInfo) => {
-            this.onTargetHit(target, hitInfo);
+        // Set up hit behavior with network awareness
+        target.userData.onHit = (hitInfo, sendToNetwork = true) => {
+            this.onTargetHit(target, hitInfo, sendToNetwork);
         };
         
         // Add to scene and track
         this.scene.add(target);
         this.targets.push(target);
         
-        // Notify weapon system about new target (if available)
-        if (window.weaponSystem && window.weaponSystem.scanForNewTargets) {
-            setTimeout(() => {
-                window.weaponSystem.scanForNewTargets();
-                console.log('Target created - notifying weapon system to scan');
-            }, 100); // Small delay to ensure target is fully added to scene
-        }
+        console.log(`🎯 Target added to scene and tracked. Total targets: ${this.targets.length}`);
+        console.log(`🎯 Target position:`, target.position);
+        console.log(`🎯 Target userData:`, target.userData);
+        console.log(`🎯 Target added to scene children count:`, this.scene.children.length);
+        
+        // Wait a frame to ensure target is fully added to scene, then notify weapon system
+        setTimeout(() => {
+            if (window.weapon && window.weapon.scanForNewTargets) {
+                console.log('🎯 Target fully added - triggering weapon scan...');
+                window.weapon.scanForNewTargets();
+                console.log('🎯 Weapon scan triggered after target addition');
+            } else {
+                console.log('🎯 Weapon system not available yet for target registration');
+            }
+        }, 50); // Reduced delay but still ensure target is fully processed
         
         return target;
     }
     
-    onTargetHit(target, hitInfo) {
-        const damage = 25; // Damage per hit
-        target.userData.health -= damage;
+    onTargetHit(target, hitInfo, sendToNetwork = true) {
+        const damage = hitInfo.damage || 25;
         
-        console.log(`Target hit! Health: ${target.userData.health}/${target.userData.maxHealth}`);
+        console.log(`🎯 Target hit! SendToNetwork: ${sendToNetwork}, Damage: ${damage}`);
+        console.log(`🎯 Target ID: ${target.userData.targetId}, Health: ${target.userData.health}/${target.userData.maxHealth}`);
         
-        // Visual feedback
+        // Always show visual feedback immediately for responsive gameplay
         this.showHitEffect(target);
         
+        // Apply damage locally for responsive gameplay
+        const oldHealth = target.userData.health;
+        target.userData.health = Math.max(0, target.userData.health - damage);
+        console.log(`🎯 Damage applied! Health changed from ${oldHealth} to ${target.userData.health}/${target.userData.maxHealth}`);
+        
+        // Check for local destruction (but server will confirm)
         if (target.userData.health <= 0) {
-            this.destroyTarget(target);
+            console.log(`🎯 Target destroyed! Health: ${target.userData.health}/${target.userData.maxHealth}`);
+            
+            // Actually destroy the target instead of just fading it
+            this.destroyTarget(target, sendToNetwork);
+            
+            // Don't apply fade effect since we're destroying the target
+            return;
         }
     }
     
@@ -238,46 +292,61 @@ export class TargetManager {
     }
     
     destroyTarget(target, sendNetwork = true) {
-        console.log(`Target destroyed! Points: ${target.userData.points}`);
-        
-        // Send network event for multiplayer (unless this is from a network event)
-        if (sendNetwork && this.networkManager && this.networkManager.isConnected) {
-            this.networkManager.sendTargetHit({
-                targetId: target.userData.targetId,
-                points: target.userData.points
-            });
-        }
+        console.log(`🎯 Destroying target! Points: ${target.userData.points}, Send to network: ${sendNetwork}`);
+        console.log(`🎯 Target ID: ${target.userData.targetId}`);
+        console.log(`🎯 Network manager available: ${!!this.networkManager}`);
         
         // Create destruction effect
         this.createDestructionEffect(target.position);
+        
+        // Remove from weapon system's collision tracking
+        if (window.weapon && window.weapon.removeTargetCollider) {
+            window.weapon.removeTargetCollider(target);
+            console.log(`🎯 Removed target from weapon collision system`);
+        }
         
         // Remove from tracking and scene
         const index = this.targets.indexOf(target);
         if (index > -1) {
             this.targets.splice(index, 1);
+            console.log(`🎯 Removed target from tracking. Remaining targets: ${this.targets.length}`);
         }
         
         this.scene.remove(target);
+        console.log(`🎯 Removed target from scene`);
         
         // Notify score system
         if (this.onTargetDestroyed) {
             this.onTargetDestroyed(target.userData.points);
         }
         
-        // Respawn after delay
-        setTimeout(() => {
-            this.spawnRandomTarget();
-        }, 2000 + Math.random() * 3000);
+        // Don't respawn targets automatically - server handles spawning new targets
+        if (!this.networkManager) {
+            // Only respawn in singleplayer mode
+            console.log(`🎯 Singleplayer mode - scheduling target respawn`);
+            setTimeout(() => {
+                this.spawnRandomTarget();
+            }, 2000 + Math.random() * 3000);
+        } else {
+            console.log(`🎯 Multiplayer mode - server will handle target respawning`);
+        }
     }
     
     // Find and destroy target by ID (for multiplayer events)
     destroyTargetById(targetId, sendNetwork = true) {
-        const target = this.targets.find(t => t.userData.targetId === targetId);
+        console.log(`🎯 Attempting to destroy target by ID: ${targetId}`);
+        console.log(`🎯 Available targets:`, this.targets.map(t => ({ id: t.userData.targetId, pos: t.position })));
+        
+        const target = this.targets.find(t => t.userData.targetId === targetId.toString());
         if (target) {
+            console.log(`🎯 Found target ${targetId}, destroying...`);
             this.destroyTarget(target, sendNetwork);
             return true;
+        } else {
+            console.warn(`🎯 Target ${targetId} not found for destruction!`);
+            console.log(`🎯 Available target IDs:`, this.targets.map(t => t.userData.targetId));
+            return false;
         }
-        return false;
     }
     
     createDestructionEffect(position) {
@@ -338,6 +407,11 @@ export class TargetManager {
         animateDestruction();
     }
     
+    // Check if target manager is ready to create targets
+    isReady() {
+        return this.isModelLoaded && this.targetModel !== null;
+    }
+    
     spawnInitialTargets() {
         const positions = [
             new THREE.Vector3(0, 2, -15),
@@ -396,5 +470,11 @@ export class TargetManager {
             this.scene.remove(target);
         });
         this.targets = [];
+        
+        // Notify weapon system to clear its colliders
+        if (window.weapon && window.weapon.clearAllTargetColliders) {
+            window.weapon.clearAllTargetColliders();
+            console.log('🎯 Notified weapon system to clear target colliders');
+        }
     }
 }

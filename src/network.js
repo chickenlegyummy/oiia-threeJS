@@ -24,7 +24,9 @@ export class NetworkManager {
         this.onPlayerLeft = null;
         this.onPlayerUpdate = null;
         this.onPlayerShot = null;
+        this.onTargetHit = null;
         this.onTargetDestroyed = null;
+        this.onTargetSpawned = null;
         this.onGameStateReceived = null;
         this.onConnectionChange = null;
     }
@@ -168,10 +170,24 @@ export class NetworkManager {
             }
         });
 
+        // Handle target hits
+        this.socket.on('targetHit', (hitData) => {
+            if (this.onTargetHit) {
+                this.onTargetHit(hitData);
+            }
+        });
+
         // Handle target destruction
         this.socket.on('targetDestroyed', (destroyData) => {
             if (this.onTargetDestroyed) {
                 this.onTargetDestroyed(destroyData);
+            }
+        });
+
+        // Handle new target spawning
+        this.socket.on('targetSpawned', (targetData) => {
+            if (this.onTargetSpawned) {
+                this.onTargetSpawned(targetData);
             }
         });
     }

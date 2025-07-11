@@ -22,7 +22,7 @@ export class Weapon {
         
         // Bullet effects
         this.activeBullets = [];
-        this.bulletSpeed = 100; // Increased speed for precise hitbox collision
+        this.bulletSpeed = 25; // Reduced speed for better collision detection and visibility
         this.bulletLifetime = 3.0; // seconds
         this.maxBulletTrails = 50;
         this.ammoModel = null; // Loaded ammo.glb model
@@ -74,8 +74,9 @@ export class Weapon {
             this.setupInput();
             this.isLoaded = true;
             
-            // Scan for existing targets on initialization
-            this.scanForNewTargets();
+            // DON'T scan for targets during initialization in multiplayer mode
+            // Targets will be scanned after they're received from the server
+            console.log('🔫 Weapon system initialized - target scanning will happen after network sync');
             
             // Expose debug command to global console
             window.weaponDebug = () => this.toggleDebugMode();
@@ -389,45 +390,81 @@ export class Weapon {
     }
     
     setupInput() {
-        // Mouse shooting
+        console.log('🎮 Setting up weapon input handlers...');
+        
+        // Mouse shooting with better pointer lock detection
         document.addEventListener('mousedown', (event) => {
+            console.log('🖱️ Mouse down event:', event.button, 'Pointer locked:', !!document.pointerLockElement);
             if (event.button === 0) { // Left mouse button
+                console.log('🔫 Left click detected, starting shooting...');
                 this.startShooting();
             }
         });
         
         document.addEventListener('mouseup', (event) => {
+            console.log('🖱️ Mouse up event:', event.button);
             if (event.button === 0) {
+                console.log('🔫 Left click released, stopping shooting...');
                 this.stopShooting();
+            }
+        });
+        
+        // Also try click event as backup
+        document.addEventListener('click', (event) => {
+            console.log('🖱️ Click event detected, pointer locked:', !!document.pointerLockElement);
+            if (document.pointerLockElement) {
+                console.log('🔫 Click while pointer locked - firing shot...');
+                this.startShooting();
+                setTimeout(() => this.stopShooting(), 100); // Auto-release after 100ms
             }
         });
         
         // Reload key (R)
         document.addEventListener('keydown', (event) => {
             if (event.code === 'KeyR') {
+                console.log('🔄 Reload key pressed');
                 this.reload();
             }
+            
+            // Add manual shooting test key (T for test)
+            if (event.code === 'KeyT') {
+                console.log('🧪 Manual test shot triggered');
+                this.shoot();
+            }
         });
+        
+        console.log('🎮 Input handlers set up successfully');
     }
     
     startShooting() {
-        if (!this.isLoaded) return;
+        console.log('🎯 startShooting() called, weapon loaded:', this.isLoaded);
+        if (!this.isLoaded) {
+            console.log('❌ Weapon not loaded, cannot shoot');
+            return;
+        }
         this.isShooting = true;
         this.shootTimer = 0; // Allow immediate first shot
+        console.log('✅ Shooting started, isShooting:', this.isShooting);
     }
     
     stopShooting() {
+        console.log('🛑 stopShooting() called');
         this.isShooting = false;
+        console.log('✅ Shooting stopped, isShooting:', this.isShooting);
     }
     
     shoot() {
+        console.log('🔫 SHOOT() called!');
+        
         if (this.magAmmo <= 0) {
+            console.log('🔫 No ammo, reloading...');
             this.reload();
             return false;
         }
         
         // Consume ammo
         this.magAmmo--;
+        console.log(`🔫 Ammo consumed, remaining: ${this.magAmmo}`);
         
         // Play shoot animation
         if (this.animations.shoot) {
@@ -440,10 +477,19 @@ export class Weapon {
         const shootDirection = new THREE.Vector3();
         this.camera.getWorldDirection(shootDirection);
         
+        console.log('🔫 Bullet details:', {
+            muzzlePos: muzzlePos,
+            shootDirection: shootDirection,
+            bulletSpeed: this.bulletSpeed,
+            targetColliders: this.targetColliders.size
+        });
+        
         // No spread - bullets must follow crosshair exactly for precise hitbox collision
         shootDirection.normalize();
         
-        this.createBulletTrail(muzzlePos, shootDirection);
+        const bullet = this.createBulletTrail(muzzlePos, shootDirection);
+        console.log('🔫 Bullet created:', bullet);
+        console.log('🔫 Active bullets count:', this.activeBullets.length);
         
         // Send shooting event to server for multiplayer
         if (this.networkManager && this.networkManager.isConnected) {
@@ -506,6 +552,12 @@ export class Weapon {
             }
             
             if (targetMesh.userData.isTarget) {
+                // Check if target is locally destroyed (avoid hitting "dead" targets)
+                if (targetMesh.userData.locallyDestroyed) {
+                    console.log('🎯 Hit locally destroyed target - ignoring');
+                    return hit;
+                }
+                
                 this.onTargetHit(targetMesh, hit);
             }
             
@@ -540,14 +592,41 @@ export class Weapon {
     
     onTargetHit(target, hitInfo) {
         console.log('🎯 Target hit via collider!', target);
+        console.log('🎯 Target userData:', target.userData);
+        console.log('🎯 Target ID:', target.userData.targetId);
+        console.log('🎯 Target health:', target.userData.health);
+        console.log('🎯 Weapon damage:', this.damage);
         
-        // Only apply hit effect to the specific target that was hit
-        // The target's own hit system will handle the red flash effect
+        // Send target hit event for multiplayer synchronization
+        if (this.networkManager && this.networkManager.isConnected && target.userData.targetId) {
+            const hitData = {
+                targetId: target.userData.targetId.toString(), // Ensure it's a string
+                hitPoint: {
+                    x: hitInfo.point.x,
+                    y: hitInfo.point.y,
+                    z: hitInfo.point.z
+                },
+                damage: this.damage || 25, // Use weapon damage or default
+                playerId: this.networkManager.playerId
+            };
+            
+            console.log('🌐 Sending target hit to server:', hitData);
+            this.networkManager.sendTargetHit(hitData);
+        } else {
+            console.warn('🌐 Cannot send target hit - no network connection or target ID missing');
+            console.log('🌐 NetworkManager connected:', this.networkManager?.isConnected);
+            console.log('🌐 Target ID present:', !!target.userData.targetId);
+            console.log('🌐 Target ID value:', target.userData.targetId);
+            console.log('🌐 Target ID type:', typeof target.userData.targetId);
+        }
         
-        // Trigger target behavior - this will call the target's onHit method
-        // which handles the red flash effect properly
+        // Apply local hit effect immediately (don't wait for server response)
+        // This ensures responsive gameplay for the shooting player
         if (target.userData.onHit) {
-            target.userData.onHit(hitInfo);
+            // Pass the actual damage to the hit handler
+            const hitInfoWithDamage = { ...hitInfo, damage: this.damage || 25 };
+            // Don't send to network since we already sent it above
+            target.userData.onHit(hitInfoWithDamage, false);
         }
     }
     
@@ -652,8 +731,8 @@ export class Weapon {
         // Add to scene
         this.scene.add(bullet);
         
-        // Create rectangular collider for this bullet
-        this.createBulletCollider(bullet);
+        // Simplified collision - no separate collider needed
+        // We'll use the bullet mesh itself for collision detection
         
         // Add debug helper if debug mode is on
         if (this.debugMode) {
@@ -734,6 +813,10 @@ export class Weapon {
     }
 
     updateBullets(deltaTime) {
+        if (this.activeBullets.length > 0) {
+            console.log(`🔄 Updating ${this.activeBullets.length} bullets`);
+        }
+        
         for (let i = this.activeBullets.length - 1; i >= 0; i--) {
             const bullet = this.activeBullets[i];
             
@@ -743,15 +826,14 @@ export class Weapon {
             // Update position
             bullet.mesh.position.add(bullet.velocity.clone().multiplyScalar(deltaTime));
             
-            // Update bullet collider position
-            const collider = this.bulletColliders.get(bullet.mesh);
-            if (collider) {
-                collider.position.copy(bullet.mesh.position);
-                collider.rotation.copy(bullet.mesh.rotation);
-            }
+            console.log(`🔄 Bullet ${i} position:`, bullet.mesh.position);
             
             // Perform collision detection for this bullet
-            this.checkBulletColliderCollision(bullet, prevPosition);
+            const hit = this.checkBulletColliderCollision(bullet, prevPosition);
+            if (hit) {
+                console.log('🎯 Bullet hit detected and handled!');
+                continue; // Bullet was removed due to hit
+            }
             
             // Add bullet rotation for visual effect - spin around Y-axis
             bullet.mesh.rotation.y += deltaTime * 15; // Consistent Y-axis spinning for all bullet types
@@ -776,7 +858,6 @@ export class Weapon {
             // Remove expired bullets
             if (bullet.life <= 0) {
                 this.removeDebugHelper(bullet.mesh);
-                this.removeBulletCollider(bullet.mesh);
                 this.scene.remove(bullet.mesh);
                 this.activeBullets.splice(i, 1);
             }
@@ -784,102 +865,93 @@ export class Weapon {
     }
     
     checkBulletColliderCollision(bullet, prevPosition) {
-        const bulletCollider = this.bulletColliders.get(bullet);
-        if (!bulletCollider) return false;
+        // SIMPLIFIED INDUSTRY-STANDARD APPROACH
+        // Use distance-based collision detection for reliability
         
-        // Create raycaster from previous position to current position
-        const direction = new THREE.Vector3().subVectors(bullet.mesh.position, prevPosition);
-        const distance = direction.length();
+        console.log('🔍 Checking bullet collision (distance-based method)');
         
-        if (distance === 0) return false;
+        // Check collision with each target using distance method
+        let hit = false;
+        const currentPos = bullet.mesh.position;
         
-        direction.normalize();
-        const raycaster = new THREE.Raycaster(prevPosition, direction, 0, distance);
-        
-        // PRIORITY 1: Check collisions with target colliders ONLY (these are our hit triggers)
-        const targetColliders = [];
         this.targetColliders.forEach((collider, target) => {
-            // Only include visible and properly positioned colliders
-            if (collider.visible !== false) {
-                targetColliders.push(collider);
+            if (hit) return; // Already hit something
+            
+            // Primary collision: Distance-based detection
+            const distance = currentPos.distanceTo(collider.position);
+            const hitRadius = 3; // Target hit radius
+            
+            if (distance <= hitRadius) {
+                console.log('🎯 DISTANCE HIT!', {
+                    target: target.userData.targetId,
+                    bulletPos: currentPos,
+                    targetPos: target.position,
+                    colliderPos: collider.position,
+                    distance: distance,
+                    hitRadius: hitRadius
+                });
+                
+                // Create hit data
+                const hitData = {
+                    point: currentPos.clone(),
+                    face: { normal: new THREE.Vector3(0, 1, 0) },
+                    object: collider,
+                    distance: distance
+                };
+                
+                // Trigger target hit
+                if (target.userData.isTarget && !target.userData.locallyDestroyed) {
+                    this.onTargetHit(target, hitData);
+                }
+                
+                // Remove bullet
+                this.removeDebugHelper(bullet.mesh);
+                this.scene.remove(bullet.mesh);
+                const bulletIndex = this.activeBullets.indexOf(bullet);
+                if (bulletIndex > -1) {
+                    this.activeBullets.splice(bulletIndex, 1);
+                }
+                
+                hit = true;
+                return;
+            }
+            
+            if (distance < hitRadius) {
+                console.log('🎯 DISTANCE HIT!', {
+                    target: target.userData.targetId,
+                    distance: distance,
+                    hitRadius: hitRadius,
+                    bulletPos: currentPos,
+                    targetPos: target.position
+                });
+                
+                // Create hit data
+                const hitData = {
+                    point: currentPos.clone(),
+                    face: { normal: new THREE.Vector3(0, 1, 0) },
+                    object: collider,
+                    distance: distance
+                };
+                
+                // Trigger target hit
+                if (target.userData.isTarget && !target.userData.locallyDestroyed) {
+                    this.onTargetHit(target, hitData);
+                }
+                
+                // Remove bullet
+                this.removeDebugHelper(bullet.mesh);
+                this.scene.remove(bullet.mesh);
+                const bulletIndex = this.activeBullets.indexOf(bullet);
+                if (bulletIndex > -1) {
+                    this.activeBullets.splice(bulletIndex, 1);
+                }
+                
+                hit = true;
+                return;
             }
         });
         
-        const targetIntersects = raycaster.intersectObjects(targetColliders, false);
-        if (targetIntersects.length > 0) {
-            const hit = targetIntersects[0];
-            const hitCollider = hit.object;
-            const parentTarget = hitCollider.userData.parentTarget;
-            
-            console.log('🎯 HIT TARGET COLLIDER!', {
-                collider: hitCollider,
-                target: parentTarget,
-                hitPoint: hit.point
-            });
-            
-            // Move bullet to hit position
-            bullet.mesh.position.copy(hit.point);
-            bulletCollider.position.copy(hit.point);
-            
-            // Create hit effect at collision point
-            this.createHitEffect(hit.point, hit.face.normal);
-            
-            // Trigger target hit using the collider as the trigger
-            if (parentTarget && parentTarget.userData.isTarget) {
-                this.onTargetHit(parentTarget, hit);
-            }
-            
-            // Remove bullet after hit
-            this.removeDebugHelper(bullet.mesh);
-            this.removeBulletCollider(bullet.mesh);
-            this.scene.remove(bullet.mesh);
-            const bulletIndex = this.activeBullets.indexOf(bullet);
-            if (bulletIndex > -1) {
-                this.activeBullets.splice(bulletIndex, 1);
-            }
-            
-            return true;
-        }
-        
-        // PRIORITY 2: Only check environment if no target colliders were hit
-        const environmentTargets = [];
-        this.scene.traverse((child) => {
-            if (child.isMesh && 
-                !this.isWeaponMesh(child) && 
-                !child.userData.isBullet && 
-                !child.userData.isBulletCollider &&
-                !child.userData.isTargetCollider &&
-                !child.userData.isTarget) { // Exclude actual target meshes since we use colliders
-                environmentTargets.push(child);
-            }
-        });
-        
-        const environmentIntersects = raycaster.intersectObjects(environmentTargets, true);
-        if (environmentIntersects.length > 0) {
-            const hit = environmentIntersects[0];
-            
-            console.log('🏗️ HIT ENVIRONMENT:', hit.object);
-            
-            // Move bullet to hit position
-            bullet.mesh.position.copy(hit.point);
-            bulletCollider.position.copy(hit.point);
-            
-            // Create hit effect
-            this.createHitEffect(hit.point, hit.face.normal);
-            
-            // Remove bullet after hit
-            this.removeDebugHelper(bullet.mesh);
-            this.removeBulletCollider(bullet.mesh);
-            this.scene.remove(bullet.mesh);
-            const bulletIndex = this.activeBullets.indexOf(bullet);
-            if (bulletIndex > -1) {
-                this.activeBullets.splice(bulletIndex, 1);
-            }
-            
-            return true;
-        }
-        
-        return false;
+        return hit;
     }
     
     createBulletCollider(bullet) {
@@ -930,12 +1002,13 @@ export class Weapon {
         collider.userData.isTargetCollider = true;
         collider.userData.parentTarget = target;
         
-        // Position collider at target's position (not bounding box center)
+        // Position collider at target's position (center it properly)
         collider.position.copy(target.position);
         
-        // For scaled targets, we might need a slight Y offset to center on the body
-        // Since targets are scaled ~5x, add a small offset upward from ground
-        collider.position.y += 1.0; // Adjust this value to center on cat body
+        // For scaled targets, center the collider properly
+        // Targets are scaled ~5x, so adjust Y position to center on the target
+        // No offset needed if we want it centered on the target
+        // collider.position.y += 1.0; // Remove this offset for now
         
         collider.rotation.copy(target.rotation);
         
@@ -988,52 +1061,99 @@ export class Weapon {
         target.userData.isTarget = false;
     }
 
+    clearAllTargetColliders() {
+        console.log('🧹 Clearing all target colliders...');
+        console.log(`🧹 Before clear: ${this.targetColliders.size} colliders`);
+        
+        // Remove all colliders from scene and clear the map
+        this.targetColliders.forEach((collider, target) => {
+            if (collider && collider.parent) {
+                this.scene.remove(collider);
+            }
+            if (collider && collider.geometry) {
+                collider.geometry.dispose();
+            }
+            if (collider && collider.material) {
+                collider.material.dispose();
+            }
+        });
+        
+        this.targetColliders.clear();
+        console.log(`🧹 After clear: ${this.targetColliders.size} colliders`);
+    }
+
     scanForNewTargets() {
         // Automatically detect and register new targets
         let foundTargets = 0;
         let totalTargetsInScene = 0;
         let alreadyRegistered = 0;
         
-        console.log('Scanning for targets in scene...');
+        console.log('🔍 Scanning for targets in scene...');
+        console.log('🔍 Current scene children count:', this.scene.children.length);
+        console.log('🔍 Current target colliders count:', this.targetColliders.size);
         
         this.scene.traverse((child) => {
             // Count all objects with isTarget flag
             if (child.userData && child.userData.isTarget) {
                 totalTargetsInScene++;
-                console.log(`Found target in scene: ${child.type}`, child.name || 'unnamed', 'Position:', child.position);
+                console.log(`🎯 Found target in scene: ${child.type}`, child.name || 'unnamed', 'ID:', child.userData.targetId, 'Position:', child.position);
                 
-                // Check if already has collider
+                // Check if already has collider using the target object itself as key
                 if (this.targetColliders.has(child)) {
                     alreadyRegistered++;
-                    console.log('  - Already has collider');
+                    console.log('  ✅ Already has collider');
                 } else {
                     // Auto-register with appropriate collider size based on bounding box
                     const box = new THREE.Box3().setFromObject(child);
                     const size = new THREE.Vector3();
                     box.getSize(size);
                     
-                    console.log('  - Bounding box size:', size);
+                    console.log('  📏 Bounding box size:', size);
                     
-                    // Use fixed collider size based on known target scaling (targets are scaled ~5x)
+                    // Use much larger collider size to ensure hits are registered
+                    // Targets are scaled ~5x so they're quite large
                     const colliderSize = {
-                        width: 2,   // Fixed width for cat targets
-                        height: 2,  // Fixed height for cat targets
-                        depth: 4    // Fixed depth for cat targets
+                        width: 8,   // Much larger width for cat targets
+                        height: 8,  // Much larger height for cat targets  
+                        depth: 8    // Much larger depth for cat targets
                     };
                     
                     this.createTargetCollider(child, colliderSize);
                     foundTargets++;
-                    console.log('  - Auto-detected and registered new target:', child.type, 'Size:', colliderSize);
+                    console.log('  ✅ Auto-detected and registered new target:', child.type, 'Size:', colliderSize);
                 }
             }
         });
         
-        console.log(`Scan complete: Found ${totalTargetsInScene} targets in scene, ${alreadyRegistered} already registered, ${foundTargets} newly registered`);
-        console.log(`Total target colliders: ${this.targetColliders.size}`);
+        console.log(`🔍 Scan complete: Found ${totalTargetsInScene} targets in scene, ${alreadyRegistered} already registered, ${foundTargets} newly registered`);
+        console.log(`🎯 Total target colliders after scan: ${this.targetColliders.size}`);
+        
+        // Verify colliders are working
+        if (this.targetColliders.size > 0) {
+            console.log('🎯 Target collider details:');
+            this.targetColliders.forEach((collider, target) => {
+                console.log(`  - Target ID: ${target.userData.targetId}, Collider exists: ${!!collider}, Position: (${target.position.x.toFixed(1)}, ${target.position.y.toFixed(1)}, ${target.position.z.toFixed(1)})`);
+            });
+        } else {
+            console.log('⚠️ No target colliders found after scan!');
+        }
+        
+        // Send debug info to server for visibility but less frequently
+        if (this.networkManager && this.networkManager.socket && foundTargets > 0) {
+            this.networkManager.socket.emit('debugInfo', {
+                message: `Client scanned targets: ${totalTargetsInScene} found, ${foundTargets} registered, ${this.targetColliders.size} total colliders`
+            });
+        }
         
         if (this.debugMode && foundTargets > 0) {
             console.log('Debug mode is active - new target colliders should be visible as red wireframes');
         }
+        
+        return {
+            totalFound: totalTargetsInScene,
+            newlyRegistered: foundTargets,
+            totalColliders: this.targetColliders.size
+        };
     }
 
     getGunMuzzlePosition() {
@@ -1072,6 +1192,13 @@ export class Weapon {
     update(deltaTime) {
         if (!this.isLoaded) return;
         
+        // Debug log occasionally
+        if (!this.updateCounter) this.updateCounter = 0;
+        this.updateCounter++;
+        if (this.updateCounter % 300 === 0) { // Every 5 seconds at 60fps
+            console.log('🔄 Weapon update running, isShooting:', this.isShooting, 'shootTimer:', this.shootTimer.toFixed(3));
+        }
+        
         // Scan for new targets every few frames (performance optimization)
         if (!this.scanCounter) this.scanCounter = 0;
         this.scanCounter++;
@@ -1095,8 +1222,12 @@ export class Weapon {
         
         // Handle shooting
         if (this.isShooting && this.shootTimer <= 0) {
+            console.log('🔫 Attempting to shoot...');
             if (this.shoot()) {
                 this.shootTimer = this.fireRate;
+                console.log('✅ Shot fired, next shot in:', this.fireRate);
+            } else {
+                console.log('❌ Shot failed');
             }
         }
         
@@ -1279,9 +1410,9 @@ export class Weapon {
         // Update target collider positions to match their parent targets
         this.targetColliders.forEach((collider, target) => {
             if (target.parent) { // Target still exists in scene
-                // Position collider at target position with slight Y offset
+                // Position collider exactly at target position (no offset)
                 collider.position.copy(target.position);
-                collider.position.y += 1.0; // Same offset as creation
+                // collider.position.y += 1.0; // Remove offset for now
                 collider.rotation.copy(target.rotation);
                 // Don't copy scale - colliders should stay fixed size
             } else {
