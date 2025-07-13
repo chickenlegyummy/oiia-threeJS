@@ -131,7 +131,18 @@ export class NetworkManager {
 
         // Handle game updates
         this.socket.on('gameUpdate', (gameData) => {
-            // console.log('🔄 Game update received, players:', gameData.players.length);
+            if (gameData.players.length > 1) { // Only log when there are multiple players
+                console.log('🔄 Game update received, players:', gameData.players.length);
+                gameData.players.forEach(playerData => {
+                    if (playerData.id !== this.playerId) {
+                        console.log(`🔄 Update for player ${playerData.id}:`, {
+                            position: playerData.position,
+                            isMoving: playerData.isMoving
+                        });
+                    }
+                });
+            }
+            
             gameData.players.forEach(playerData => {
                 if (playerData.id !== this.playerId) {
                     this.otherPlayers.set(playerData.id, playerData);
@@ -145,11 +156,16 @@ export class NetworkManager {
 
         // Handle new player joining
         this.socket.on('playerJoined', (playerData) => {
-            console.log('🎉 Player joined:', playerData.id);
+            console.log('🎉 Player joined event received:', playerData.id);
+            console.log('🎉 Player data:', playerData);
             this.otherPlayers.set(playerData.id, playerData);
             
             if (this.onPlayerJoined) {
+                console.log('🎉 Calling onPlayerJoined handler...');
                 this.onPlayerJoined(playerData);
+                console.log('🎉 onPlayerJoined handler completed');
+            } else {
+                console.error('❌ No onPlayerJoined handler registered!');
             }
         });
 
@@ -239,6 +255,10 @@ export class RemotePlayer {
         this.activeBullets = [];
         this.networkManager = networkManager; // Store reference to NetworkManager
         this.ammoModel = null; // Will be set when available
+        this.lastUpdateTime = Date.now(); // Track when we last received an update
+        this.updateCount = 0; // Track total updates received
+        this.createdTime = Date.now(); // Track when this remote player was created
+        this.isStale = false; // Flag to mark if this player should be considered stale
         
         console.log('🔧 Creating RemotePlayer with data:', playerData);
         
@@ -278,6 +298,13 @@ export class RemotePlayer {
         this.targetPosition = this.networkPosition.clone();
         this.targetRotation = this.networkRotation.clone();
         
+        // Set initial mesh position to match network position immediately to prevent slow interpolation from origin
+        if (this.mesh) {
+            this.mesh.position.copy(this.networkPosition);
+            this.mesh.rotation.y = this.networkRotation.y;
+            console.log('🎯 Set initial mesh position for remote player', this.id, 'to:', this.networkPosition);
+        }
+        
         // Visual state
         this.isMoving = playerData.isMoving || false;
         this.isCrouching = playerData.isCrouching || false;
@@ -312,6 +339,11 @@ export class RemotePlayer {
         this.mesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
+        
+        // Mark for debugging
+        this.mesh.userData.isRemotePlayer = true;
+        this.mesh.userData.playerId = this.id;
+        this.mesh.name = `RemotePlayer_${this.id}`;
         
         // Head (sphere)
         const headGeometry = new THREE.SphereGeometry(0.25, 8, 8);
@@ -626,7 +658,82 @@ export class RemotePlayer {
         animateFlash();
     }
 
+    // Check if this remote player should be considered stale (no updates for too long)
+    isPlayerStale() {
+        const now = Date.now();
+        const timeSinceLastUpdate = now - this.lastUpdateTime;
+        const timeSinceCreated = now - this.createdTime;
+        
+        // Consider player stale if:
+        // 1. No updates for more than 5 seconds AND player has been around for more than 3 seconds (faster cleanup)
+        // 2. OR no updates for more than 15 seconds regardless of creation time (reduced from 30s)
+        const isStaleFromInactivity = (timeSinceLastUpdate > 5000 && timeSinceCreated > 3000) || timeSinceLastUpdate > 15000;
+        
+        if (isStaleFromInactivity && !this.isStale) {
+            console.warn(`⚠️ Remote player ${this.id} marked as stale (no updates for ${timeSinceLastUpdate}ms)`);
+            this.isStale = true;
+        }
+        
+        return this.isStale;
+    }
+
+    // Enhanced method to detect if this player might be a reconnection duplicate
+    isPotentialReconnectionDuplicate(newPlayerPosition, threshold = 3) {
+        if (!this.mesh || !newPlayerPosition) return false;
+        
+        const distance = this.mesh.position.distanceTo(new THREE.Vector3(
+            newPlayerPosition.x,
+            newPlayerPosition.y,
+            newPlayerPosition.z
+        ));
+        
+        const timeSinceUpdate = Date.now() - this.lastUpdateTime;
+        const isStale = timeSinceUpdate > 3000; // 3 seconds without updates
+        
+        return distance < threshold && isStale;
+    }
+
+    // Mark this player for immediate cleanup (used when detecting reconnection)
+    markForCleanup(reason = 'unknown') {
+        console.log(`🗑️ Marking remote player ${this.id} for cleanup: ${reason}`);
+        this.isStale = true;
+        
+        // Fade out the player to indicate it's being removed
+        if (this.mesh) {
+            this.mesh.traverse((child) => {
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(mat => {
+                            if (mat.transparent !== undefined) {
+                                mat.opacity = 0.3;
+                            }
+                        });
+                    } else if (child.material.transparent !== undefined) {
+                        child.material.opacity = 0.3;
+                    }
+                }
+            });
+        }
+    }
+
     updateFromNetwork(playerData) {
+        // Track update frequency for debugging
+        this.updateCount++;
+        const now = Date.now();
+        const timeSinceLastUpdate = now - this.lastUpdateTime;
+        this.lastUpdateTime = now;
+        
+        // Reset stale flag when we receive an update
+        this.isStale = false;
+        
+        // Log first few updates and any gaps for new players
+        if (this.updateCount <= 3 || timeSinceLastUpdate > 1000) {
+            console.log(`📡 Remote player ${this.id} update #${this.updateCount}, gap: ${timeSinceLastUpdate}ms, position:`, playerData.position);
+        }
+        
+        // Store previous position for distance calculation
+        const previousTarget = this.targetPosition.clone();
+        
         // Update target position and rotation for interpolation
         this.targetPosition.set(
             playerData.position.x,
@@ -640,6 +747,13 @@ export class RemotePlayer {
             0
         );
         
+        // If this is a big position change (player just joined or teleported), snap immediately
+        if (this.mesh && previousTarget.distanceTo(this.targetPosition) > 10) {
+            console.log('📍 Large position change detected for remote player', this.id, '- snapping to new position');
+            this.mesh.position.copy(this.targetPosition);
+            this.mesh.rotation.y = this.targetRotation.y;
+        }
+        
         // Update state flags
         this.isMoving = playerData.isMoving || false;
         this.isCrouching = playerData.isCrouching || false;
@@ -651,8 +765,8 @@ export class RemotePlayer {
             this.mesh.scale.y = targetHeight / 1.6;
         }
         
-        // Debug: log position occasionally
-        if (Math.random() < 0.01) { // 1% chance to log
+        // Debug: log position occasionally (reduced frequency)
+        if (this.updateCount > 10 && Math.random() < 0.005) { // 0.5% chance to log after initial updates
             console.log(`🎯 Remote player ${this.id} at:`, this.targetPosition);
         }
     }
@@ -660,8 +774,22 @@ export class RemotePlayer {
     update(deltaTime) {
         if (!this.mesh) return;
         
+        // Calculate distance to target for adaptive interpolation
+        const distanceToTarget = this.mesh.position.distanceTo(this.targetPosition);
+        
+        // Use faster interpolation for large distances (e.g., when player just joined or teleported)
+        let interpolationSpeed = deltaTime * 10; // Default speed
+        if (distanceToTarget > 5) {
+            // If player is very far from target, use much faster interpolation or snap immediately
+            interpolationSpeed = deltaTime * 50; // 5x faster
+            console.log('🏃 Fast interpolation for remote player', this.id, 'distance:', distanceToTarget.toFixed(2));
+        } else if (distanceToTarget > 1) {
+            // Medium distance, use faster interpolation
+            interpolationSpeed = deltaTime * 20; // 2x faster
+        }
+        
         // Interpolate position
-        this.mesh.position.lerp(this.targetPosition, deltaTime * 10);
+        this.mesh.position.lerp(this.targetPosition, Math.min(interpolationSpeed, 1.0));
         
         // Interpolate rotation (only Y axis for looking around)
         this.mesh.rotation.y = THREE.MathUtils.lerp(

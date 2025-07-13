@@ -215,7 +215,11 @@ io.on('connection', (socket) => {
     });
 
     // Notify other players about new player
-    socket.broadcast.emit('playerJoined', player.toNetworkData());
+    const newPlayerData = player.toNetworkData();
+    console.log(`📡 Broadcasting playerJoined event for ${socket.id} to other players`);
+    console.log(`📡 Player data being sent:`, newPlayerData);
+    socket.broadcast.emit('playerJoined', newPlayerData);
+    console.log(`📡 playerJoined broadcast sent for ${socket.id}`);
 
     // Handle player input
     socket.on('playerInput', (inputData) => {
@@ -289,13 +293,21 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Handle player disconnect
-    socket.on('disconnect', () => {
-        console.log(`Player ${socket.id} disconnected`);
-        delete gameState.players[socket.id];
+    // Handle player disconnection
+    socket.on('disconnect', (reason) => {
+        console.log(`Player ${socket.id} disconnected: ${reason}`);
         
-        // Notify other players
+        // Remove player from game state
+        if (gameState.players[socket.id]) {
+            delete gameState.players[socket.id];
+            console.log(`Removed player ${socket.id} from game state`);
+        }
+        
+        // Notify all other connected players about the disconnect
         socket.broadcast.emit('playerLeft', socket.id);
+        console.log(`Notified other players about ${socket.id} leaving`);
+        
+        console.log(`Remaining players: ${Object.keys(gameState.players).length}`);
     });
 
     // Handle debug info from clients

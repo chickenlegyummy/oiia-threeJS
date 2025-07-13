@@ -142,19 +142,82 @@ window.gamePlayer = player;
 // Initialize multiplayer
 const networkManager = new NetworkManager();
 const remotePlayers = new Map();
+const processedPlayerIds = new Set(); // Track players we've already processed to prevent duplicates
 
 // Expose for debugging
 window.networkManager = networkManager;
 window.remotePlayers = remotePlayers;
+window.processedPlayerIds = processedPlayerIds;
+window.gameScene = scene;
+window.RemotePlayer = RemotePlayer;
 
 // Set up networking callbacks
 networkManager.onPlayerJoined = (playerData) => {
-    console.log('🎮 Creating remote player:', playerData.id);
+    console.log('🎮 Creating remote player from playerJoined event:', playerData.id);
+    console.log('🎮 Current remote players before adding:', Array.from(remotePlayers.keys()));
+    
+    // Check if player already exists to prevent duplicates
+    if (remotePlayers.has(playerData.id) || processedPlayerIds.has(playerData.id)) {
+        console.warn('⚠️ Player already exists or processed, skipping creation:', playerData.id);
+        return;
+    }
+    
+    // Enhanced reconnection detection: Clean up any stale players first
+    const stalePlayersToRemove = [];
+    const newPlayerPosition = new THREE.Vector3(
+        playerData.position.x,
+        playerData.position.y,
+        playerData.position.z
+    );
+    
+    remotePlayers.forEach((remotePlayer, playerId) => {
+        // Check if player is stale or could be a reconnection duplicate
+        if (remotePlayer.isPlayerStale() || 
+            remotePlayer.isPotentialReconnectionDuplicate(playerData.position, 8)) { // Increased threshold to 8 units
+            
+            console.log(`🔄 Removing stale/duplicate player ${playerId} for new player ${playerData.id}`);
+            remotePlayer.markForCleanup('reconnection or stale detection');
+            stalePlayersToRemove.push(playerId);
+        }
+    });
+    
+    // Remove stale players immediately
+    stalePlayersToRemove.forEach(playerId => {
+        const remotePlayer = remotePlayers.get(playerId);
+        if (remotePlayer) {
+            remotePlayer.destroy();
+            remotePlayers.delete(playerId);
+            processedPlayerIds.delete(playerId);
+        }
+    });
+    
+    // Additional cleanup: Force remove any players that haven't been updated in 3+ seconds
+    const now = Date.now();
+    const additionalCleanup = [];
+    remotePlayers.forEach((remotePlayer, playerId) => {
+        const timeSinceUpdate = now - remotePlayer.lastUpdateTime;
+        if (timeSinceUpdate > 3000) {
+            console.log(`🧹 Force removing inactive player ${playerId} (${timeSinceUpdate}ms since update)`);
+            additionalCleanup.push(playerId);
+        }
+    });
+    
+    additionalCleanup.forEach(playerId => {
+        const remotePlayer = remotePlayers.get(playerId);
+        if (remotePlayer) {
+            remotePlayer.destroy();
+            remotePlayers.delete(playerId);
+            processedPlayerIds.delete(playerId);
+        }
+    });
+    
     try {
         const remotePlayer = new RemotePlayer(scene, playerData, networkManager);
         remotePlayers.set(playerData.id, remotePlayer);
+        processedPlayerIds.add(playerData.id); // Mark as processed
         updatePlayerCount();
-        console.log('👥 Total remote players:', remotePlayers.size);
+        console.log('👥 Total remote players after adding:', remotePlayers.size);
+        console.log('👥 Remote player IDs:', Array.from(remotePlayers.keys()));
     } catch (error) {
         console.error('❌ Error creating remote player:', error);
     }
@@ -170,9 +233,12 @@ networkManager.onPlayerLeft = (playerId) => {
         console.log('🚪 Destroying remote player:', playerId);
         remotePlayer.destroy();
         remotePlayers.delete(playerId);
+        processedPlayerIds.delete(playerId); // Remove from processed set
         console.log('🚪 Remote player destroyed and removed from map');
     } else {
         console.warn('🚪 Player not found in remote players map:', playerId);
+        // Also remove from processed set in case it's stuck there
+        processedPlayerIds.delete(playerId);
     }
     
     updatePlayerCount();
@@ -181,21 +247,26 @@ networkManager.onPlayerLeft = (playerId) => {
 };
 
 networkManager.onPlayerUpdate = (playerUpdates) => {
-    // console.log('🔄 Updating', playerUpdates.size, 'remote players');
+    if (playerUpdates.size > 0) {
+        console.log('🔄 Updating', playerUpdates.size, 'remote players');
+        playerUpdates.forEach((playerData, playerId) => {
+            console.log(`🔄 Update data for ${playerId}:`, {
+                position: playerData.position,
+                isMoving: playerData.isMoving,
+                hasRemotePlayer: remotePlayers.has(playerId)
+            });
+        });
+    }
+    
     playerUpdates.forEach((playerData, playerId) => {
         const remotePlayer = remotePlayers.get(playerId);
         if (remotePlayer) {
             remotePlayer.updateFromNetwork(playerData);
         } else {
-            // Create new remote player if not exists
-            console.log('🆕 Creating new remote player from update:', playerId);
-            try {
-                const newRemotePlayer = new RemotePlayer(scene, playerData, networkManager);
-                remotePlayers.set(playerId, newRemotePlayer);
-                updatePlayerCount();
-            } catch (error) {
-                console.error('❌ Error creating remote player from update:', error);
-            }
+            // Only create new remote player from update if we haven't processed initial game state yet
+            // This prevents duplicate players when processing gameUpdate events after initial connection
+            console.warn('⚠️ Received update for unknown player:', playerId, '- this should only happen during initial connection');
+            // Don't create players here - they should be created via onPlayerJoined or initial gameState
         }
     });
 };
@@ -550,17 +621,36 @@ function processGameState() {
     updateConnectionStatus(true);
     
     // Create remote players from initial state
+    console.log('🧑‍🤝‍🧑 Processing initial game state players...');
+    console.log('🧑‍🤝‍🧑 Players in game state:', gameState.players.length);
+    console.log('🧑‍🤝‍🧑 My player ID:', networkManager.playerId);
+    console.log('🧑‍🤝‍🧑 Current remote players before processing:', Array.from(remotePlayers.keys()));
+    
     gameState.players.forEach(playerData => {
         if (playerData.id !== networkManager.playerId) {
-            console.log('🧑‍🤝‍🧑 Creating initial remote player:', playerData.id);
+            console.log('🧑‍🤝‍🧑 Processing initial remote player:', playerData.id);
+            
+            // Check if player already exists to prevent duplicates
+            if (remotePlayers.has(playerData.id) || processedPlayerIds.has(playerData.id)) {
+                console.warn('⚠️ Player already exists during initial processing, skipping:', playerData.id);
+                return;
+            }
+            
             try {
                 const remotePlayer = new RemotePlayer(scene, playerData, networkManager);
                 remotePlayers.set(playerData.id, remotePlayer);
+                processedPlayerIds.add(playerData.id); // Mark as processed
+                console.log('✅ Created initial remote player:', playerData.id);
             } catch (error) {
                 console.error('❌ Error creating initial remote player:', error);
             }
+        } else {
+            console.log('🧑‍🤝‍🧑 Skipping own player data:', playerData.id);
         }
     });
+    
+    console.log('🧑‍🤝‍🧑 Remote players after initial processing:', Array.from(remotePlayers.keys()));
+    updatePlayerCount();
     
     // ALWAYS process targets from server state, regardless of client state
     console.log('🎯 Processing targets from server state...');
@@ -688,6 +778,7 @@ networkManager.onConnectionChange = (connected) => {
             remotePlayer.destroy();
         });
         remotePlayers.clear();
+        processedPlayerIds.clear(); // Clear processed players tracking
         updatePlayerCount();
         console.log('🧹 All remote players cleared due to disconnection');
     }
@@ -1024,6 +1115,36 @@ function animate() {
         remotePlayer.update(deltaTime);
     });
     
+    // Check for and clean up stale remote players (every 2 seconds instead of 5)
+    if (Math.floor(Date.now() / 2000) % 1 === 0 && Math.random() < 0.02) { // Roughly every 2 seconds, increased probability
+        const stalePlayerIds = [];
+        const now = Date.now();
+        
+        remotePlayers.forEach((remotePlayer, playerId) => {
+            // Check both the formal stale detection and a simple time-based check
+            const timeSinceUpdate = now - remotePlayer.lastUpdateTime;
+            const isTimedOut = timeSinceUpdate > 4000; // 4 seconds timeout (reduced from implied longer timeout)
+            
+            if (remotePlayer.isPlayerStale() || isTimedOut) {
+                console.log(`🧹 Player ${playerId} is stale (${timeSinceUpdate}ms since update)`);
+                stalePlayerIds.push(playerId);
+            }
+        });
+        
+        if (stalePlayerIds.length > 0) {
+            console.log('🧹 Cleaning up stale remote players:', stalePlayerIds);
+            stalePlayerIds.forEach(playerId => {
+                const remotePlayer = remotePlayers.get(playerId);
+                if (remotePlayer) {
+                    remotePlayer.destroy();
+                    remotePlayers.delete(playerId);
+                    processedPlayerIds.delete(playerId);
+                }
+            });
+            updatePlayerCount();
+        }
+    }
+    
     // Update weapon system (if loaded)
     if (weapon) {
         weapon.update(0.016); // Assuming ~60fps
@@ -1359,6 +1480,99 @@ window.debugSpawnTarget = () => {
     }
 };
 
+// Enhanced multiplayer debug functions
+window.debugMultiplayer = () => {
+    console.log('=== MULTIPLAYER DEBUG ===');
+    console.log('🌐 Network connection:', networkManager?.isConnected || false);
+    console.log('🆔 Local player ID:', networkManager?.playerId || 'N/A');
+    console.log('👥 Remote players:', remotePlayers.size);
+    console.log('📝 Processed player IDs:', processedPlayerIds.size);
+    
+    if (remotePlayers.size > 0) {
+        console.log('👤 Remote player details:');
+        remotePlayers.forEach((remotePlayer, playerId) => {
+            const now = Date.now();
+            const timeSinceUpdate = now - remotePlayer.lastUpdateTime;
+            const timeSinceCreation = now - remotePlayer.createdTime;
+            
+            console.log(`  Player ${playerId}:`);
+            console.log(`    - Updates received: ${remotePlayer.updateCount}`);
+            console.log(`    - Last update: ${timeSinceUpdate}ms ago`);
+            console.log(`    - Created: ${timeSinceCreation}ms ago`);
+            console.log(`    - Position: ${remotePlayer.mesh?.position.x.toFixed(2)}, ${remotePlayer.mesh?.position.y.toFixed(2)}, ${remotePlayer.mesh?.position.z.toFixed(2)}`);
+            console.log(`    - Is stale: ${remotePlayer.isPlayerStale()}`);
+            console.log(`    - Mesh in scene: ${!!remotePlayer.mesh?.parent}`);
+        });
+    }
+    
+    console.log('=== END MULTIPLAYER DEBUG ===');
+};
+
+window.cleanupStalePlayers = () => {
+    console.log('🧹 Manual stale player cleanup...');
+    const stalePlayerIds = [];
+    const now = Date.now();
+    
+    remotePlayers.forEach((remotePlayer, playerId) => {
+        const timeSinceUpdate = now - remotePlayer.lastUpdateTime;
+        const isStale = remotePlayer.isPlayerStale() || timeSinceUpdate > 3000; // 3 second threshold
+        
+        if (isStale) {
+            console.log(`🧹 Found stale player ${playerId} (${timeSinceUpdate}ms since update)`);
+            stalePlayerIds.push(playerId);
+        }
+    });
+    
+    if (stalePlayerIds.length > 0) {
+        console.log('🧹 Removing stale players:', stalePlayerIds);
+        stalePlayerIds.forEach(playerId => {
+            const remotePlayer = remotePlayers.get(playerId);
+            if (remotePlayer) {
+                remotePlayer.destroy();
+                remotePlayers.delete(playerId);
+                processedPlayerIds.delete(playerId);
+            }
+        });
+        updatePlayerCount();
+        console.log('✅ Cleanup complete');
+    } else {
+        console.log('✅ No stale players found');
+    }
+};
+
+window.forceCleanAllPlayers = () => {
+    console.log('🚨 FORCE CLEANING ALL REMOTE PLAYERS...');
+    remotePlayers.forEach((remotePlayer, playerId) => {
+        console.log(`🧹 Force removing player: ${playerId}`);
+        remotePlayer.destroy();
+    });
+    remotePlayers.clear();
+    processedPlayerIds.clear();
+    updatePlayerCount();
+    console.log('🚨 All remote players forcibly removed');
+};
+
+window.testMultiplayerFix = () => {
+    console.log('🧪 Testing multiplayer fix...');
+    window.debugMultiplayer();
+    
+    // Test stale detection
+    console.log('🧪 Testing stale player detection...');
+    remotePlayers.forEach((remotePlayer, playerId) => {
+        console.log(`Player ${playerId} is stale: ${remotePlayer.isPlayerStale()}`);
+    });
+    
+    // Test cleanup
+    console.log('🧪 Running cleanup...');
+    window.cleanupStalePlayers();
+    
+    // Final state
+    setTimeout(() => {
+        console.log('🧪 Final state after test:');
+        window.debugMultiplayer();
+    }, 1000);
+};
+
 // Debug function to check current target status
 window.debugTargetStatus = () => {
     console.log('=== COMPLETE TARGET STATUS ===');
@@ -1390,4 +1604,52 @@ window.debugTargetStatus = () => {
     console.log(`  - Player ID: ${networkManager?.playerId || 'N/A'}`);
     
     console.log('=== END TARGET STATUS ===');
+};
+
+window.testReconnectionScenario = () => {
+    console.log('🧪 Testing reconnection scenario...');
+    
+    // First, show current state
+    console.log('🧪 Initial state:');
+    window.debugMultiplayer();
+    
+    // Simulate a stale player by manually setting its lastUpdateTime to old value
+    if (remotePlayers.size > 0) {
+        const firstPlayer = remotePlayers.values().next().value;
+        const oldTime = firstPlayer.lastUpdateTime;
+        firstPlayer.lastUpdateTime = Date.now() - 6000; // 6 seconds ago
+        
+        console.log('🧪 Artificially made a player stale (6s old update)');
+        console.log('🧪 Player is now stale:', firstPlayer.isPlayerStale());
+        
+        // Test cleanup
+        setTimeout(() => {
+            console.log('🧪 Running cleanup after making player stale...');
+            window.cleanupStalePlayers();
+            
+            // Show final state
+            setTimeout(() => {
+                console.log('🧪 Final state after cleanup:');
+                window.debugMultiplayer();
+            }, 500);
+        }, 1000);
+    } else {
+        console.log('🧪 No remote players to test with');
+    }
+};
+
+window.testMovementDelay = () => {
+    console.log('🧪 Testing movement delay fix...');
+    
+    if (remotePlayers.size > 0) {
+        remotePlayers.forEach((remotePlayer, playerId) => {
+            console.log(`🧪 Player ${playerId}:`);
+            console.log(`  - Current position: ${remotePlayer.mesh?.position.x.toFixed(2)}, ${remotePlayer.mesh?.position.y.toFixed(2)}, ${remotePlayer.mesh?.position.z.toFixed(2)}`);
+            console.log(`  - Target position: ${remotePlayer.targetPosition.x.toFixed(2)}, ${remotePlayer.targetPosition.y.toFixed(2)}, ${remotePlayer.targetPosition.z.toFixed(2)}`);
+            console.log(`  - Distance to target: ${remotePlayer.mesh?.position.distanceTo(remotePlayer.targetPosition).toFixed(2)}`);
+            console.log(`  - Updates received: ${remotePlayer.updateCount}`);
+        });
+    } else {
+        console.log('🧪 No remote players to test with');
+    }
 };

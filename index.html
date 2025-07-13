@@ -475,14 +475,77 @@
             console.log('Player ID:', window.networkManager?.playerId);
             console.log('Remote Players:', window.remotePlayers?.size);
             console.log('Remote Players Map:', window.remotePlayers);
+            console.log('Processed Player IDs:', window.processedPlayerIds);
             if (window.networkManager?.socket) {
                 console.log('Socket Connected:', window.networkManager.socket.connected);
                 console.log('Socket ID:', window.networkManager.socket.id);
+            }
+            
+            // Check for duplicate players in the scene
+            if (window.gameScene) {
+                const allObjects = [];
+                window.gameScene.traverse((child) => {
+                    if (child.userData && child.userData.isRemotePlayer) {
+                        allObjects.push({
+                            name: child.name,
+                            id: child.userData.playerId,
+                            position: child.position.clone()
+                        });
+                    }
+                });
+                console.log('Objects in scene marked as remote players:', allObjects);
+            }
+            
+            // Check for stale players
+            if (window.remotePlayers) {
+                console.log('=== STALE PLAYER CHECK ===');
+                window.remotePlayers.forEach((remotePlayer, playerId) => {
+                    const timeSinceUpdate = Date.now() - remotePlayer.lastUpdateTime;
+                    const isStale = remotePlayer.isPlayerStale();
+                    console.log(`Player ${playerId}: last update ${timeSinceUpdate}ms ago, stale: ${isStale}`);
+                });
+            }
+        }
+        
+        // Function to manually clean up stale players
+        function cleanupStalePlayers() {
+            if (!window.remotePlayers) {
+                console.log('No remote players to clean up');
+                return;
+            }
+            
+            console.log('🧹 Manually cleaning up stale players...');
+            const stalePlayerIds = [];
+            window.remotePlayers.forEach((remotePlayer, playerId) => {
+                if (remotePlayer.isPlayerStale()) {
+                    stalePlayerIds.push(playerId);
+                }
+            });
+            
+            if (stalePlayerIds.length > 0) {
+                console.log('🧹 Found stale players:', stalePlayerIds);
+                stalePlayerIds.forEach(playerId => {
+                    const remotePlayer = window.remotePlayers.get(playerId);
+                    if (remotePlayer) {
+                        remotePlayer.destroy();
+                        window.remotePlayers.delete(playerId);
+                        window.processedPlayerIds?.delete(playerId);
+                    }
+                });
+                console.log('🧹 Stale players cleaned up');
+                
+                // Update player count if function exists
+                if (typeof updatePlayerCount === 'function') {
+                    updatePlayerCount();
+                }
+            } else {
+                console.log('✅ No stale players found');
             }
         }
         
         // Expose debug function globally
         window.debugMultiplayer = debugMultiplayer;
+        window.cleanupStalePlayers = cleanupStalePlayers;
         
         // Update slider values in real-time
         document.addEventListener('DOMContentLoaded', function() {
@@ -531,5 +594,7 @@
     
     <script type="module" src="src/scene.js"></script>
     <script type="module" src="src/player.js"></script>
+    <script src="test-multiplayer-fix.js"></script>
+    <script src="debug-remote-players.js"></script>
 </body>
 </html>
