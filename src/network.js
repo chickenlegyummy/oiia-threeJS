@@ -249,6 +249,7 @@ export class NetworkManager {
 export class RemotePlayer {
     constructor(scene, playerData, networkManager = null) {
         this.id = playerData.id;
+        this.name = playerData.name || 'Guest'; // Store player name
         this.scene = scene;
         this.loader = new GLTFLoader();
         this.weapon = null;
@@ -261,6 +262,7 @@ export class RemotePlayer {
         this.isStale = false; // Flag to mark if this player should be considered stale
         
         console.log('🔧 Creating RemotePlayer with data:', playerData);
+        console.log('🏷️ Player name:', this.name);
         
         // Add warning if networkManager is not provided
         if (!networkManager) {
@@ -375,16 +377,92 @@ export class RemotePlayer {
     }
 
     createNameTag() {
-        // Simple name tag - you can enhance this with actual text rendering
-        const nameGeometry = new THREE.PlaneGeometry(1, 0.2);
+        // Create canvas for text rendering
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 256;
+        canvas.height = 64;
+        
+        // Set text properties
+        context.font = 'Bold 24px Arial';
+        context.fillStyle = 'white';
+        context.strokeStyle = 'black';
+        context.lineWidth = 2;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        
+        // Clear canvas with transparent background
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw text outline (stroke)
+        context.strokeText(this.name, canvas.width / 2, canvas.height / 2);
+        
+        // Draw text fill
+        context.fillText(this.name, canvas.width / 2, canvas.height / 2);
+        
+        // Create texture from canvas
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+        
+        // Create name tag mesh
+        const nameGeometry = new THREE.PlaneGeometry(2, 0.5);
         const nameMaterial = new THREE.MeshBasicMaterial({ 
-            color: 0xffffff, 
-            transparent: true, 
-            opacity: 0.8 
+            map: texture,
+            transparent: true,
+            alphaTest: 0.1,
+            side: THREE.DoubleSide
         });
+        
         this.nameTag = new THREE.Mesh(nameGeometry, nameMaterial);
         this.nameTag.position.set(0, 2.2, 0);
+        
+        // Make name tag always face the camera
+        this.nameTag.userData.isBillboard = true;
+        
         this.mesh.add(this.nameTag);
+        
+        console.log('🏷️ Created name tag for player:', this.name);
+    }
+
+    updateNameTag() {
+        if (!this.nameTag) return;
+        
+        // Create new canvas for updated text
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 256;
+        canvas.height = 64;
+        
+        // Set text properties
+        context.font = 'Bold 24px Arial';
+        context.fillStyle = 'white';
+        context.strokeStyle = 'black';
+        context.lineWidth = 2;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        
+        // Clear canvas with transparent background
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw text outline (stroke)
+        context.strokeText(this.name, canvas.width / 2, canvas.height / 2);
+        
+        // Draw text fill
+        context.fillText(this.name, canvas.width / 2, canvas.height / 2);
+        
+        // Update existing texture
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.needsUpdate = true;
+        
+        // Update material map
+        this.nameTag.material.map = texture;
+        this.nameTag.material.needsUpdate = true;
+        
+        console.log('🏷️ Updated name tag for player:', this.name);
     }
 
     // Load weapon model for remote player
@@ -725,6 +803,13 @@ export class RemotePlayer {
         
         // Reset stale flag when we receive an update
         this.isStale = false;
+        
+        // Update player name if it changed
+        if (playerData.name && playerData.name !== this.name) {
+            console.log(`🏷️ Player ${this.id.slice(-4)} name updated: "${this.name}" -> "${playerData.name}"`);
+            this.name = playerData.name;
+            this.updateNameTag();
+        }
         
         // Log first few updates and any gaps for new players
         if (this.updateCount <= 3 || timeSinceLastUpdate > 1000) {

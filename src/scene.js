@@ -4,8 +4,35 @@ import { Weapon } from './weapon.js';
 import { TargetManager } from './targets.js';
 import { NetworkManager, RemotePlayer } from './network.js';
 
+// Initialize loading system first
+let gameIsReady = false;
+let gameStartRequested = false;
+let networkSynced = false;
+let playerCanMove = false;
+
+// Create loading manager if not already created
+if (!window.gameLoadingManager) {
+    console.log('⚠️ Loading manager not found, loading system may not be fully initialized');
+}
+
 // Create scene
 const scene = new THREE.Scene();
+
+// Register systems with loading manager
+if (window.gameLoadingManager) {
+    console.log('🔄 Registering game systems with loading manager...');
+    
+    // Register all systems that need to be loaded
+    window.gameLoadingManager.registerSystem('skybox', 'Skybox textures');
+    window.gameLoadingManager.registerSystem('player', 'Player system');
+    window.gameLoadingManager.registerSystem('weapon', 'Weapon system');
+    window.gameLoadingManager.registerSystem('targets', 'Target system');
+    window.gameLoadingManager.registerSystem('network', 'Multiplayer network');
+    window.gameLoadingManager.registerSystem('audio', 'Audio system');
+    window.gameLoadingManager.registerSystem('models', '3D models');
+    
+    console.log('✅ Game systems registered with loading manager');
+}
 
 // Create skybox using cube texture
 const loader = new THREE.CubeTextureLoader();
@@ -20,16 +47,26 @@ const skyboxTexture = loader.load([
 // onLoad
 () => {
     console.log('Skybox cube texture loaded successfully');
+    if (window.gameLoadingManager) {
+        window.gameLoadingManager.markSystemLoaded('skybox');
+    }
 },
 // onProgress
 (progress) => {
-    console.log('Skybox loading progress');
+    console.log('Skybox loading progress:', progress);
+    if (window.gameLoadingManager && progress.loaded && progress.total) {
+        const percent = (progress.loaded / progress.total) * 100;
+        window.gameLoadingManager.updateSystemProgress('skybox', percent, 'Loading textures...');
+    }
 },
 // onError
 (error) => {
     console.error('Error loading skybox cube texture:', error);
     // Fallback to solid color background
     scene.background = new THREE.Color(0x87CEEB);
+    if (window.gameLoadingManager) {
+        window.gameLoadingManager.markSystemError('skybox', error);
+    }
 });
 
 // Set the skybox as scene background
@@ -48,6 +85,11 @@ camera.position.set(0, 1.6, 5); // Eye level height
 // Add audio listener to camera
 const audioListener = new THREE.AudioListener();
 camera.add(audioListener);
+
+// Mark audio system as loaded
+if (window.gameLoadingManager) {
+    window.gameLoadingManager.markSystemLoaded('audio');
+}
 
 // Create renderer with enhanced settings
 const renderer = new THREE.WebGLRenderer({ 
@@ -136,6 +178,11 @@ scene.add(floor);
 // Initialize player
 const player = new Player(camera, scene);
 
+// Mark player system as loaded
+if (window.gameLoadingManager) {
+    window.gameLoadingManager.markSystemLoaded('player');
+}
+
 // Expose player globally for debug functions
 window.gamePlayer = player;
 
@@ -143,6 +190,11 @@ window.gamePlayer = player;
 const networkManager = new NetworkManager();
 const remotePlayers = new Map();
 const processedPlayerIds = new Set(); // Track players we've already processed to prevent duplicates
+
+// Mark network system as loaded
+if (window.gameLoadingManager) {
+    window.gameLoadingManager.markSystemLoaded('network');
+}
 
 // Expose for debugging
 window.networkManager = networkManager;
@@ -799,6 +851,11 @@ async function initializeSystems() {
         // Expose weapon globally for target system integration
         window.weapon = weapon;
         
+        // Mark weapon system as loaded
+        if (window.gameLoadingManager) {
+            window.gameLoadingManager.markSystemLoaded('weapon');
+        }
+        
         // Add debug function to manually scan targets
         window.scanTargets = () => {
             if (window.weapon && window.weapon.scanForNewTargets) {
@@ -828,6 +885,20 @@ async function initializeSystems() {
         
         // Initialize target system
         targetManager = new TargetManager(scene, networkManager);
+        
+        // Mark target system as loaded when ready
+        if (window.gameLoadingManager) {
+            // Check if target manager is fully loaded
+            const checkTargetManagerReady = () => {
+                if (targetManager && targetManager.isModelLoaded) {
+                    window.gameLoadingManager.markSystemLoaded('targets');
+                    console.log('✅ Target system fully loaded');
+                } else {
+                    setTimeout(checkTargetManagerReady, 100);
+                }
+            };
+            checkTargetManagerReady();
+        }
         
         // Set up callbacks after initialization
         if (targetManager) {
@@ -868,16 +939,125 @@ async function initializeSystems() {
         
         console.log('FPS systems initialization completed');
         
-        // NOW connect to multiplayer server after weapon system is ready
-        console.log('🚀 Initializing multiplayer connection...');
-        networkManager.connect();
+        // Mark models system as loaded (will be updated as individual models load)
+        if (window.gameLoadingManager) {
+            window.gameLoadingManager.markSystemLoaded('models');
+        }
         
     } catch (error) {
-        console.error('Error initializing FPS systems:', error);
+        console.error('Error initializing systems:', error);
+        if (window.gameLoadingManager) {
+            window.gameLoadingManager.markSystemError('initialization', error);
+        }
     }
 }
 
-// Initialize systems first, then connect
+// Set up game loading completion handler
+if (window.gameLoadingManager) {
+    window.gameLoadingManager.onComplete(() => {
+        console.log('🎉 All game systems loaded - game ready to start!');
+        gameIsReady = true;
+        
+        // Show instructions when game is ready
+        const instructions = document.getElementById('instructions');
+        if (instructions) {
+            instructions.innerHTML = `
+                <h2>Cat FPS Game</h2>
+                <p>Click or press <strong>F</strong> to start playing</p>
+                <p>Use <strong>WASD</strong> to move, <strong>Space</strong> to jump</p>
+                <p>Left click to shoot, <strong>R</strong> to reload</p>
+                <p>Press <strong>Tab</strong> for debug panel</p>
+                <p>Press <strong>Escape</strong> to exit</p>
+            `;
+        }
+        
+        // If player already requested to start, start now
+        if (gameStartRequested) {
+            startGame();
+        }
+    });
+}
+
+// Global function called when loading screen start button is clicked
+window.gameLoadingComplete = () => {
+    console.log('🎮 Loading screen start button clicked');
+    gameStartRequested = true;
+    
+    if (gameIsReady) {
+        startGame();
+    } else {
+        console.log('🎮 Game start requested but systems not ready yet');
+    }
+};
+
+// Function to actually start the game
+function startGame() {
+    console.log('🚀 Starting game...');
+    gameIsReady = true;
+    gameStartRequested = true;
+    
+    // Connect to multiplayer
+    if (networkManager && !networkManager.isConnected) {
+        console.log('🌐 Connecting to multiplayer server...');
+        
+        // Set up network event handlers
+        const originalOnConnectionChange = networkManager.onConnectionChange;
+        networkManager.onConnectionChange = (connected) => {
+            if (connected) {
+                console.log('🌐 Connected to server, waiting for sync...');
+            } else {
+                console.log('🌐 Disconnected from server');
+                networkSynced = false;
+                playerCanMove = false;
+            }
+            
+            if (originalOnConnectionChange) {
+                originalOnConnectionChange(connected);
+            }
+        };
+        
+        // Set up game state received handler for sync completion
+        const originalOnGameStateReceived = networkManager.onGameStateReceived;
+        networkManager.onGameStateReceived = (gameState) => {
+            console.log('🌐 Game state received - network sync complete!');
+            networkSynced = true;
+            playerCanMove = true;
+            
+            // Show instructions when ready
+            showGameInstructions();
+            
+            if (originalOnGameStateReceived) {
+                originalOnGameStateReceived(gameState);
+            }
+        };
+        
+        networkManager.connect();
+    } else {
+        // Already connected or no network manager
+        networkSynced = true;
+        playerCanMove = true;
+        showGameInstructions();
+    }
+}
+
+// Function to show game instructions
+function showGameInstructions() {
+    const instructions = document.getElementById('instructions');
+    if (instructions) {
+        instructions.innerHTML = `
+            <h2>Cat FPS Game</h2>
+            <p><strong>Player:</strong> ${window.gamePlayerName || 'Guest'}</p>
+            <p>Click or press <strong>F</strong> to start playing</p>
+            <p>Use <strong>WASD</strong> to move, <strong>Space</strong> to jump</p>
+            <p>Left click to shoot, <strong>R</strong> to reload</p>
+            <p>Press <strong>Tab</strong> for debug panel</p>
+            <p>Press <strong>Escape</strong> to exit</p>
+        `;
+        instructions.style.display = 'block';
+    }
+}
+
+// Initialize systems first, but don't connect to network yet
 initializeSystems();
 
 // Score system
@@ -972,13 +1152,19 @@ document.addEventListener('keydown', (event) => {
         debugPanel.classList.toggle('active', debugPanelVisible);
         
         if (debugPanelVisible) {
-            // Opening debug panel - release pointer lock
+            // Opening debug panel - release pointer lock and block input
             if (player.isLocked) {
                 player.exitPointerLock();
             }
+            if (window.inputBlocker) {
+                window.inputBlocker.fullBlock('debug');
+            }
         } else {
-            // Closing debug panel - hide instructions and enable clicking to re-enter game
+            // Closing debug panel - hide instructions and unblock input
             instructions.style.display = 'none';
+            if (window.inputBlocker) {
+                window.inputBlocker.fullUnblock('debug');
+            }
         }
     }
 });
@@ -1071,6 +1257,7 @@ function animate() {
     // Send player state to server
     if (networkManager.isConnected && player.isLocked) {
         const playerInput = {
+            name: window.gamePlayerName || 'Guest',
             position: {
                 x: player.camera.position.x,
                 y: player.camera.position.y,
@@ -1093,6 +1280,7 @@ function animate() {
     } else if (networkManager.isConnected && !player.isLocked) {
         // Send basic position even when not locked, in case player is in menu
         const basicInput = {
+            name: window.gamePlayerName || 'Guest',
             position: {
                 x: player.camera.position.x,
                 y: player.camera.position.y,

@@ -117,7 +117,8 @@ const TICK_INTERVAL = 1000 / TICK_RATE;
 class ServerPlayer {
     constructor(id) {
         this.id = id;
-        this.position = { x: 0, y: 1.6, z: 0 };
+        this.name = 'Guest'; // Default name, will be updated by client
+        this.position = { x: 0, y: 1.6, z: 5 }; // Match client starting position
         this.rotation = { x: 0, y: 0 };
         this.velocity = { x: 0, y: 0, z: 0 };
         this.health = 100;
@@ -152,6 +153,12 @@ class ServerPlayer {
             this.rotation = inputData.rotation;
         }
 
+        // Update player name if provided
+        if (inputData.name && inputData.name !== this.name) {
+            console.log(`Player ${this.id.slice(-4)} name updated: "${this.name}" -> "${inputData.name}"`);
+            this.name = inputData.name;
+        }
+
         this.isMoving = inputData.isMoving || false;
         this.isCrouching = inputData.isCrouching || false;
         this.isRunning = inputData.isRunning || false;
@@ -160,6 +167,7 @@ class ServerPlayer {
     toNetworkData() {
         return {
             id: this.id,
+            name: this.name,
             position: this.position,
             rotation: this.rotation,
             velocity: this.velocity,
@@ -225,6 +233,18 @@ io.on('connection', (socket) => {
     socket.on('playerInput', (inputData) => {
         const player = gameState.players[socket.id];
         if (player) {
+            // Log first few inputs and occasionally after that
+            if (!player.inputCount) player.inputCount = 0;
+            player.inputCount++;
+            
+            if (player.inputCount <= 5 || player.inputCount % 120 === 0) { // First 5 and every 2 seconds
+                console.log(`📥 Player ${socket.id.slice(-4)} input #${player.inputCount}:`, {
+                    pos: inputData.position ? `(${inputData.position.x.toFixed(1)},${inputData.position.y.toFixed(1)},${inputData.position.z.toFixed(1)})` : 'none',
+                    rot: inputData.rotation ? `(${inputData.rotation.x.toFixed(2)},${inputData.rotation.y.toFixed(2)})` : 'none',
+                    moving: inputData.isMoving
+                });
+            }
+            
             player.update(inputData);
         }
     });
@@ -332,14 +352,24 @@ setInterval(() => {
 }, 30000); // Check every 30 seconds
 
 // Game loop - send updates to all clients
+let gameUpdateCount = 0;
 setInterval(() => {
     gameState.gameTime += TICK_INTERVAL;
+    gameUpdateCount++;
     
     // Send game state to all connected clients
     const networkData = {
         players: Object.values(gameState.players).map(p => p.toNetworkData()),
         gameTime: gameState.gameTime
     };
+    
+    // Log gameUpdate events occasionally (every 60 ticks = 1 second)
+    if (gameUpdateCount % 60 === 0 || gameUpdateCount <= 5) {
+        console.log(`🔄 gameUpdate #${gameUpdateCount}: ${networkData.players.length} players`);
+        if (networkData.players.length > 1) {
+            console.log('🔄 Players in update:', networkData.players.map(p => `${p.id.slice(-4)} at (${p.position.x.toFixed(1)},${p.position.y.toFixed(1)},${p.position.z.toFixed(1)})`));
+        }
+    }
     
     io.emit('gameUpdate', networkData);
 }, TICK_INTERVAL);

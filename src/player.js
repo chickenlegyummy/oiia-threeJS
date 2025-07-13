@@ -14,6 +14,7 @@ export class Player {
         this.isWalking = false;
         this.isCrouching = false;
         this.isRunning = false;
+        this.inputBlocked = false; // Input blocking flag
         
         // Player body
         this.body = null;
@@ -152,6 +153,30 @@ export class Player {
         lockEvents.forEach(event => {
             document.addEventListener(event, (e) => {
                 if (!this.isLocked && (event === 'click' || e.code === 'KeyF')) {
+                    // Check if input is blocked by overlays
+                    if (window.inputBlocker && window.inputBlocker.isInputBlocked()) {
+                        console.log('🚫 Input blocked by overlay - cannot start game');
+                        return;
+                    }
+                    
+                    // Check if game is ready before allowing pointer lock
+                    if (window.gameLoadingManager && !window.gameLoadingManager.isComplete) {
+                        console.log('🚫 Game not ready yet - please wait for loading to complete');
+                        return;
+                    }
+                    
+                    // Check if loading screen is still visible
+                    if (window.gameLoadingScreen && window.gameLoadingScreen.isVisible) {
+                        console.log('🚫 Loading screen still visible - please wait');
+                        return;
+                    }
+                    
+                    // Check if network is synced
+                    if (typeof window.playerCanMove !== 'undefined' && !window.playerCanMove) {
+                        console.log('🚫 Still syncing with server - please wait');
+                        return;
+                    }
+                    
                     this.requestPointerLock();
                 }
             });
@@ -506,6 +531,13 @@ export class Player {
 
     update() {
         if (!this.isLocked) return;
+        
+        // Only block if input is explicitly blocked for overlays (not for network sync)
+        if (window.inputBlocker && window.inputBlocker.isInputBlocked() && 
+            window.inputBlocker.getBlockReasons().includes('loading') || 
+            window.inputBlocker.getBlockReasons().includes('debug')) {
+            return; // Only block for loading/debug overlays, not network sync
+        }
         
         const time = performance.now();
         const delta = (time - this.prevTime) / 1000;

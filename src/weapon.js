@@ -37,6 +37,7 @@ export class Weapon {
         this.totalAmmo = 1200;
         this.damage = 10;
         this.range = 100;
+        this.blocked = false; // Input blocking
         
         // Visual effects
         this.muzzleFlash = null;
@@ -445,6 +446,14 @@ export class Weapon {
     
     shoot() {
         console.log('🔫 SHOOT() called!');
+        
+        // Only block shooting during loading/debug overlays, not network sync
+        if (window.inputBlocker && window.inputBlocker.isInputBlocked() && 
+            (window.inputBlocker.getBlockReasons().includes('loading') || 
+             window.inputBlocker.getBlockReasons().includes('debug'))) {
+            console.log('🚫 Shooting blocked by overlay');
+            return false;
+        }
         
         if (this.magAmmo <= 0) {
             console.log('🔫 No ammo, reloading...');
