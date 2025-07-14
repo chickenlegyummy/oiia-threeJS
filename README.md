@@ -55,7 +55,7 @@ OIIAIIOIIIAI is a web-based 3D first-person shooter (FPS) game built with **THRE
 | **Ctrl** | Crouch |
 | **R** | Reload weapon |
 | **F** | Toggle instructions |
-| **G** | Toggle debug panel |
+| **Tab** | Toggle debug panel |
 | **T** | Test shot (debug) |
 
 ### 🛠️ Technical Architecture
@@ -240,7 +240,7 @@ OIIAIIOIIIAI 是一款基於網頁的 3D 第一人稱射擊遊戲（FPS），使
 | **Ctrl** | 蹲下 |
 | **R** | 重新裝彈 |
 | **F** | 切換操作說明 |
-| **G** | 切換除錯面板 |
+| **Tab** | 切換除錯面板 |
 | **T** | 測試射擊（除錯用）|
 
 ### 🛠️ 技術架構
