@@ -104,8 +104,7 @@ oeeaeoeeeae-cat-FPS-game/
     ├── player.js          # Player mechanics
     ├── weapon.js          # Weapon system (no network)
     ├── targets.js         # Local target management
-    ├── network.js         # Network stubs
-    └── loading.js         # Loading system
+    └── network.js         # Network stubs
 ```
 
 ### 🔧 Development Setup
