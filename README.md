@@ -338,8 +338,8 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ## 🎮 Play Now!
 
-- **Single Player**: Open `singleplayer.html` / 開啟 `singleplayer.html`
-- **Multiplayer**: Start server with `node server.js` then open `index.html` / 使用 `node server.js` 啟動伺服器後開啟 `index.html`
+- **Single Player**: Open `index.html` / `https://rifu.ddns.net/oiia-threeJS`
+- **Multiplayer**: Start server with `node server.js` then open `multiplayerClient.html` 
 
 ---
 
