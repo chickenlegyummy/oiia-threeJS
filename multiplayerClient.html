@@ -19,6 +19,33 @@
             cursor: none;
         }
         
+        /* Ensure loading screen is visible on page load */
+        #loading-screen {
+            z-index: 10000 !important;
+        }
+        
+        /* Show cursor when overlays are active */
+        body.overlay-active {
+            cursor: default !important;
+        }
+        
+        body.overlay-active * {
+            cursor: default !important;
+        }
+        
+        /* Ensure overlays show cursor */
+        #loading-screen,
+        #debugPanel.active,
+        #instructions {
+            cursor: default !important;
+        }
+        
+        #loading-screen *,
+        #debugPanel.active *,
+        #instructions * {
+            cursor: default !important;
+        }
+        
         canvas {
             display: block;
             cursor: none;
@@ -191,6 +218,20 @@
             font-weight: bold;
         }
         
+        #hud #players {
+            color: #4ecdc4;
+            font-weight: bold;
+        }
+        
+        #hud #connection {
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+        
+        #hud #connection.connected {
+            color: #4ecdc4;
+        }
+        
         #hud.active {
             display: block;
         }
@@ -336,6 +377,8 @@
         <div id="speed">Speed: 0</div>
         <div id="position">Position: 0, 0, 0</div>
         <div id="fps">FPS: 60</div>
+        <div id="players">Players: 1</div>
+        <div id="connection">🔴 Offline</div>
     </div>
     
     <div id="debugPanel">
@@ -392,6 +435,7 @@
         
         <button class="debug-toggle" onclick="resetToDefaults()">Reset to Defaults</button>
         <button class="debug-toggle" onclick="resetCamera()" style="margin-left: 10px;">Reset Camera Rotation</button>
+        <button class="debug-toggle" onclick="debugMultiplayer()" style="margin-left: 10px; background: #ff6b6b;">Debug MP</button>
     </div>
 
     <script type="importmap">
@@ -401,6 +445,24 @@
             "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
         }
     }
+    </script>
+    
+    <!-- Socket.IO Client for multiplayer -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- Loading system scripts -->
+    <script src="src/loading.js"></script>
+    <script src="src/loading-screen.js"></script>
+    <script src="src/input-blocker.js"></script>
+    
+    <!-- Initialize loading screen on page load -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('🚀 Page loaded - showing loading screen');
+            if (window.gameLoadingScreen) {
+                window.gameLoadingScreen.show();
+            }
+        });
     </script>
     
     <script>
@@ -448,6 +510,85 @@
             }
         }
         
+        // Debug multiplayer function
+        function debugMultiplayer() {
+            console.log('=== MULTIPLAYER DEBUG ===');
+            console.log('Connected:', window.networkManager?.isConnected);
+            console.log('Player ID:', window.networkManager?.playerId);
+            console.log('Remote Players:', window.remotePlayers?.size);
+            console.log('Remote Players Map:', window.remotePlayers);
+            console.log('Processed Player IDs:', window.processedPlayerIds);
+            if (window.networkManager?.socket) {
+                console.log('Socket Connected:', window.networkManager.socket.connected);
+                console.log('Socket ID:', window.networkManager.socket.id);
+            }
+            
+            // Check for duplicate players in the scene
+            if (window.gameScene) {
+                const allObjects = [];
+                window.gameScene.traverse((child) => {
+                    if (child.userData && child.userData.isRemotePlayer) {
+                        allObjects.push({
+                            name: child.name,
+                            id: child.userData.playerId,
+                            position: child.position.clone()
+                        });
+                    }
+                });
+                console.log('Objects in scene marked as remote players:', allObjects);
+            }
+            
+            // Check for stale players
+            if (window.remotePlayers) {
+                console.log('=== STALE PLAYER CHECK ===');
+                window.remotePlayers.forEach((remotePlayer, playerId) => {
+                    const timeSinceUpdate = Date.now() - remotePlayer.lastUpdateTime;
+                    const isStale = remotePlayer.isPlayerStale();
+                    console.log(`Player ${playerId}: last update ${timeSinceUpdate}ms ago, stale: ${isStale}`);
+                });
+            }
+        }
+        
+        // Function to manually clean up stale players
+        function cleanupStalePlayers() {
+            if (!window.remotePlayers) {
+                console.log('No remote players to clean up');
+                return;
+            }
+            
+            console.log('🧹 Manually cleaning up stale players...');
+            const stalePlayerIds = [];
+            window.remotePlayers.forEach((remotePlayer, playerId) => {
+                if (remotePlayer.isPlayerStale()) {
+                    stalePlayerIds.push(playerId);
+                }
+            });
+            
+            if (stalePlayerIds.length > 0) {
+                console.log('🧹 Found stale players:', stalePlayerIds);
+                stalePlayerIds.forEach(playerId => {
+                    const remotePlayer = window.remotePlayers.get(playerId);
+                    if (remotePlayer) {
+                        remotePlayer.destroy();
+                        window.remotePlayers.delete(playerId);
+                        window.processedPlayerIds?.delete(playerId);
+                    }
+                });
+                console.log('🧹 Stale players cleaned up');
+                
+                // Update player count if function exists
+                if (typeof updatePlayerCount === 'function') {
+                    updatePlayerCount();
+                }
+            } else {
+                console.log('✅ No stale players found');
+            }
+        }
+        
+        // Expose debug function globally
+        window.debugMultiplayer = debugMultiplayer;
+        window.cleanupStalePlayers = cleanupStalePlayers;
+        
         // Update slider values in real-time
         document.addEventListener('DOMContentLoaded', function() {
             const sliders = document.querySelectorAll('input[type="range"]');
@@ -493,7 +634,10 @@
         });
     </script>
     
-    <script type="module" src="src_SinglePlayer/scene.js"></script>
-    <script type="module" src="src_SinglePlayer/player.js"></script>
+    <script type="module" src="src/scene.js"></script>
+    <script type="module" src="src/player.js"></script>
+    <script src="test-multiplayer-fix.js"></script>
+    <script src="debug-remote-players.js"></script>
+    <script src="test-loading-system.js"></script>
 </body>
 </html>
