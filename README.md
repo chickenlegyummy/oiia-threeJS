@@ -103,8 +103,7 @@ oeeaeoeeeae-cat-FPS-game/
     ├── scene.js           # Single player scene
     ├── player.js          # Player mechanics
     ├── weapon.js          # Weapon system (no network)
-    ├── targets.js         # Local target management
-    └── network.js         # Network stubs
+    └── targets.js         # Local target management
 ```
 
 ### 🔧 Development Setup
