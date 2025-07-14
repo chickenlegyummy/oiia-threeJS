@@ -33,14 +33,14 @@ OIIAIIOIIIAI is a web-based 3D first-person shooter (FPS) game built with **THRE
 ### 🚀 Quick Start
 
 #### Single Player Mode
-1. Open `singleplayer.html` in your web browser
+1. Open `index.html` in your web browser or via `https://rifu.ddns.net/oiia-threeJS`
 2. Wait for the game to load (should complete quickly)
 3. Click "Click to Start" when loading is complete
 4. Use WASD to move, mouse to look around, left click to shoot
 
 #### Multiplayer Mode
 1. Start the server: `node server.js`
-2. Open `index.html` in your web browser
+2. Open `multiplayerClient.html` in your web browser / `localhost:3001/multiplayerClient.html`
 3. Multiple players can join by visiting the same URL
 4. Real-time synchronized gameplay with other players
 
@@ -218,14 +218,14 @@ OIIAIIOIIIAI 是一款基於網頁的 3D 第一人稱射擊遊戲（FPS），使
 ### 🚀 快速開始
 
 #### 單人模式
-1. 在網頁瀏覽器中開啟 `singleplayer.html`
+1. 在網頁瀏覽器中開啟 `index.html` 或者 `https://rifu.ddns.net/oiia-threeJS`
 2. 等待遊戲載入（應該會快速完成）
 3. 載入完成後點擊「Click to Start」
 4. 使用 WASD 移動，滑鼠環顧四周，左鍵射擊
 
 #### 多人模式
 1. 啟動伺服器：`node server.js`
-2. 在網頁瀏覽器中開啟 `index.html`
+2. 在網頁瀏覽器中開啟 `multiplayerClient.html` / `localhost:3001/multiplayerClient.html`
 3. 多個玩家可以透過訪問相同的 URL 加入
 4. 與其他玩家進行即時同步遊戲
 
