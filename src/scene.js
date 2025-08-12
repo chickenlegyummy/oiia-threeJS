@@ -1134,7 +1134,6 @@ function startGame() {
                 }
                 networkSynced = true;
                 playerCanMove = true;
-                showGameInstructions();
             }
         }, 5000); // 5 second timeout
         
