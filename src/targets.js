@@ -469,6 +469,31 @@ export class TargetManager {
         return this.targets.length;
     }
     
+    // Remove a target without destruction effects (for cleanup)
+    removeTarget(target) {
+        if (!target) {
+            return;
+        }
+        
+        console.log('🧹 Removing target (cleanup):', target.userData.targetId);
+        
+        // Remove from weapon collision system
+        if (window.weapon && window.weapon.removeTargetCollider) {
+            window.weapon.removeTargetCollider(target);
+        }
+        
+        // Remove from tracking
+        const index = this.targets.indexOf(target);
+        if (index > -1) {
+            this.targets.splice(index, 1);
+        }
+        
+        // Remove from scene
+        this.scene.remove(target);
+        
+        console.log(`🧹 Target removed. Remaining targets: ${this.targets.length}`);
+    }
+    
     clearAllTargets() {
         this.targets.forEach(target => {
             this.scene.remove(target);

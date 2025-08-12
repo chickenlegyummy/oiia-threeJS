@@ -3,6 +3,7 @@ import { Player } from './player.js';
 import { Weapon } from './weapon.js';
 import { TargetManager } from './targets.js';
 import { NetworkManager, RemotePlayer } from './network.js';
+import { OfflineFallbackSystem } from './offline-fallback.js';
 
 // Initialize loading system first
 let gameIsReady = false;
@@ -166,14 +167,6 @@ const floor = new THREE.Mesh(floorGeometry, floorMaterial);
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
-
-
-
-
-
-
-
-
 
 // Initialize player
 const player = new Player(camera, scene);
@@ -631,6 +624,114 @@ networkManager.onTargetSpawned = (targetData) => {
     }
 };
 
+// Fallback when no internet
+
+function handleOfflineMode() {
+    console.warn('⚠️ No internet connection detected, entering offline mode...');
+    // Implement offline mode logic here
+    // Spawn Target at offline location
+    fallback_spawnInitialTargets();
+
+}
+
+// Initialize some targets
+function fallback_spawnInitialTargets() {
+    console.log('🎯 Spawning initial targets on server...');
+    
+    const positions = [
+        { x: 0, y: 2, z: -15 },
+        { x: -8, y: 1.5, z: -20 },
+        { x: 8, y: 2.5, z: -18 },
+        { x: -5, y: 1, z: -25 },
+        { x: 5, y: 3, z: -22 },
+        { x: 0, y: 1.5, z: -30 },
+        { x: -12, y: 2, z: -35 },
+        { x: 12, y: 1.8, z: -32 }
+    ];
+
+    positions.forEach((pos, index) => {
+        const target = new ServerTarget(gameState.nextTargetId++, pos, {
+            health: 75 + Math.random() * 50,
+            points: 10 + Math.floor(Math.random() * 20)
+        });
+        gameState.targets.set(target.id.toString(), target);
+        console.log(`🎯 Created target ${target.id} at position (${pos.x}, ${pos.y}, ${pos.z}) with ${target.health} health`);
+    });
+    
+    console.log(`🎯 Total targets created: ${gameState.targets.size}`);
+}
+
+function fallback_spawnNewTarget() {
+    const x = (Math.random() - 0.5) * 40;
+    const y = 1 + Math.random() * 4;
+    const z = -15 - Math.random() * 25;
+
+    const target = new ServerTarget(gameState.nextTargetId++, { x, y, z }, {
+        health: 50 + Math.random() * 100,
+        points: 5 + Math.floor(Math.random() * 25)
+    });
+
+    gameState.targets.set(target.id.toString(), target);
+    
+    console.log(`🎯 SERVER: Spawning new target ${target.id} at position (${x}, ${y}, ${z})`);
+    console.log(`🎯 SERVER: Target data to send:`, target.toNetworkData());
+    console.log(`🎯 SERVER: Total connected clients:`, io.engine.clientsCount);
+    console.log(`🎯 SERVER: Total targets after spawn:`, gameState.targets.size);
+    
+    // Broadcast new target to all clients
+    io.emit('targetSpawned', target.toNetworkData());
+    
+    console.log(`🎯 SERVER: targetSpawned event emitted to all clients`);
+}
+
+function fallback_targetHit(hitData){
+    // Convert targetId to string for consistent lookup
+    const targetId = hitData.targetId.toString();
+    const target = gameState.targets.get(targetId);
+
+    if (!target || !target.isAlive) {
+        console.log(`Target ${targetId} not found or already dead. Available targets:`, Array.from(gameState.targets.keys()));
+        return;
+    }
+
+    const damage = hitData.damage || 25;
+    const wasDestroyed = target.takeDamage(damage);
+
+    if (wasDestroyed) {
+        // Target destroyed
+        console.log(`Target ${targetId} destroyed by player ${socket.id}`);
+        
+        // Broadcast target destruction to all clients
+        io.emit('targetDestroyed', {
+            targetId: targetId, // Already a string
+            playerId: socket.id,
+            points: target.points,
+            timestamp: Date.now()
+        });
+
+        // Remove target from server state
+        gameState.targets.delete(targetId);
+
+        // Spawn a new target after a delay
+        setTimeout(() => {
+            spawnNewTarget();
+        }, 2000 + Math.random() * 3000);
+
+    } else {
+        // Target hit but not destroyed
+        // Broadcast hit event to all clients for visual feedback
+        io.emit('targetHit', {
+            targetId: targetId, // Already a string
+            playerId: socket.id,
+            damage: damage,
+            health: target.health,
+            maxHealth: target.maxHealth,
+            hitPoint: hitData.hitPoint,
+            timestamp: Date.now()
+        });
+    }
+}
+
 // Store received gameState for delayed processing if systems aren't ready
 let pendingGameState = null;
 
@@ -833,12 +934,26 @@ networkManager.onConnectionChange = (connected) => {
         processedPlayerIds.clear(); // Clear processed players tracking
         updatePlayerCount();
         console.log('🧹 All remote players cleared due to disconnection');
+        
+        // Only activate offline fallback if the game has already started
+        // Don't activate during initial connection phase
+        if (gameIsReady && gameStartRequested && offlineFallback) {
+            console.log('🔄 Activating offline mode due to connection loss during gameplay');
+            offlineFallback.activate();
+        }
+    } else {
+        console.log('🌐 Connected to server - deactivating offline mode');
+        // Deactivate offline fallback when reconnected
+        if (offlineFallback && offlineFallback.isOfflineMode) {
+            offlineFallback.deactivate();
+        }
     }
 };
 
 // Initialize weapon system first, then connect to multiplayer
 let weapon = null;
 let targetManager = null;
+let offlineFallback = null;
 
 // Initialize systems asynchronously
 async function initializeSystems() {
@@ -855,6 +970,16 @@ async function initializeSystems() {
         if (window.gameLoadingManager) {
             window.gameLoadingManager.markSystemLoaded('weapon');
         }
+        
+        // Initialize target manager (pass networkManager for multiplayer awareness)
+        targetManager = new TargetManager(scene, networkManager);
+        
+        // Initialize offline fallback system
+        offlineFallback = new OfflineFallbackSystem(scene, targetManager, weapon);
+        
+        // Expose globally for debugging
+        window.targetManager = targetManager;
+        window.offlineFallback = offlineFallback;
         
         // Add debug function to manually scan targets
         window.scanTargets = () => {
@@ -1000,19 +1125,34 @@ function startGame() {
     if (networkManager && !networkManager.isConnected) {
         console.log('🌐 Connecting to multiplayer server...');
         
-        // Set up network event handlers
-        const originalOnConnectionChange = networkManager.onConnectionChange;
-        networkManager.onConnectionChange = (connected) => {
+        // Set up connection timeout to fallback to offline mode
+        const connectionTimeout = setTimeout(() => {
+            if (!networkManager.isConnected) {
+                console.log('🔌 Connection timeout - falling back to offline mode');
+                if (offlineFallback) {
+                    offlineFallback.activate();
+                }
+                networkSynced = true;
+                playerCanMove = true;
+                showGameInstructions();
+            }
+        }, 5000); // 5 second timeout
+        
+        // Set up network event handlers - avoid overriding the main handler
+        // Just listen for the connection events we need for startup
+        let startupConnectionHandled = false;
+        
+        const startupConnectionHandler = (connected) => {
+            if (startupConnectionHandled) return; // Prevent multiple calls
+            
             if (connected) {
-                console.log('🌐 Connected to server, waiting for sync...');
+                console.log('🌐 Connected to server during startup, waiting for sync...');
+                clearTimeout(connectionTimeout); // Cancel offline fallback timeout
             } else {
-                console.log('🌐 Disconnected from server');
+                console.log('🌐 Connection failed during startup');
+                startupConnectionHandled = true;
                 networkSynced = false;
                 playerCanMove = false;
-            }
-            
-            if (originalOnConnectionChange) {
-                originalOnConnectionChange(connected);
             }
         };
         
@@ -1020,8 +1160,16 @@ function startGame() {
         const originalOnGameStateReceived = networkManager.onGameStateReceived;
         networkManager.onGameStateReceived = (gameState) => {
             console.log('🌐 Game state received - network sync complete!');
+            clearTimeout(connectionTimeout); // Cancel offline fallback timeout
+            startupConnectionHandled = true; // Mark startup as handled
             networkSynced = true;
             playerCanMove = true;
+            
+            // Make sure offline mode is deactivated when we get game state
+            if (offlineFallback && offlineFallback.isOfflineMode) {
+                console.log('🌐 Deactivating offline mode - received game state from server');
+                offlineFallback.deactivate();
+            }
             
             // Show instructions when ready
             showGameInstructions();
@@ -1032,10 +1180,34 @@ function startGame() {
         };
         
         networkManager.connect();
-    } else {
-        // Already connected or no network manager
+        
+        // Add error handling for connection failures
+        if (networkManager.socket) {
+            networkManager.socket.on('connect_error', (error) => {
+                console.log('🔌 Connection error - activating offline fallback:', error);
+                clearTimeout(connectionTimeout);
+                if (offlineFallback && !offlineFallback.isOfflineMode) {
+                    offlineFallback.activate();
+                }
+                networkSynced = true;
+                playerCanMove = true;
+                showGameInstructions();
+            });
+        }
+    } else if (networkManager && networkManager.isConnected) {
+        // Already connected - just show instructions
+        console.log('🌐 Already connected to server');
         networkSynced = true;
         playerCanMove = true;
+        showGameInstructions();
+    } else {
+        // No network manager - go offline immediately
+        console.log('🔄 No network manager available - activating offline mode');
+        networkSynced = true;
+        playerCanMove = true;
+        if (offlineFallback && !offlineFallback.isOfflineMode) {
+            offlineFallback.activate();
+        }
         showGameInstructions();
     }
 }
@@ -1044,14 +1216,20 @@ function startGame() {
 function showGameInstructions() {
     const instructions = document.getElementById('instructions');
     if (instructions) {
+        const connectionStatus = networkManager?.isConnected ? 
+            `<p><strong>Status:</strong> 🌐 Online Multiplayer</p>` : 
+            `<p><strong>Status:</strong> 🔄 Single Player (Offline)</p>`;
+            
         instructions.innerHTML = `
             <h2>Cat FPS Game</h2>
             <p><strong>Player:</strong> ${window.gamePlayerName || 'Guest'}</p>
+            ${connectionStatus}
             <p>Click or press <strong>F</strong> to start playing</p>
             <p>Use <strong>WASD</strong> to move, <strong>Space</strong> to jump</p>
             <p>Left click to shoot, <strong>R</strong> to reload</p>
             <p>Press <strong>Tab</strong> for debug panel</p>
             <p>Press <strong>Escape</strong> to exit</p>
+            ${!networkManager?.isConnected ? '<p><em>Note: Playing in offline mode with AI targets</em></p>' : ''}
         `;
         instructions.style.display = 'block';
     }
@@ -1223,6 +1401,7 @@ function onWindowResize() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    
 }
 
 window.addEventListener('resize', onWindowResize);
@@ -1351,6 +1530,11 @@ function animate() {
     // Update targets (if loaded)
     if (targetManager) {
         targetManager.update(time);
+    }
+    
+    // Update offline fallback system (if active)
+    if (offlineFallback) {
+        offlineFallback.update(deltaTime);
     }
     
     // Update HUD with player info

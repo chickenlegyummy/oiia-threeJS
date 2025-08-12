@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FirstPersonControls } from 'three/addons/controls/FirstPersonControls.js';
 
 export class Player {
     constructor(camera, scene) {
@@ -171,8 +172,9 @@ export class Player {
                         return;
                     }
                     
-                    // Check if network is synced
-                    if (typeof window.playerCanMove !== 'undefined' && !window.playerCanMove) {
+                    // Check if network is synced OR we're in offline mode
+                    if (typeof window.playerCanMove !== 'undefined' && !window.playerCanMove && 
+                        (!window.offlineFallback || !window.offlineFallback.isOfflineMode)) {
                         console.log('🚫 Still syncing with server - please wait');
                         return;
                     }
@@ -234,6 +236,8 @@ export class Player {
                 // Apply rotation to camera using clean Euler values
                 this.euler.set(this.rotationX, this.rotationY, 0, 'YXZ');
                 this.camera.quaternion.setFromEuler(this.euler);
+
+                FirstPersonControls(this.camera, domElement);
             }
         });
         
